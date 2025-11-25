@@ -56,3 +56,22 @@ export async function fetchFact(): Promise<Record<string, unknown>> {
   }
   return response.json()
 }
+
+export async function fetchBdd(): Promise<string> {
+  const response = await fetch('/api/bdd')
+  if (!response.ok) {
+    throw new Error('Unable to load BDD test cases')
+  }
+  return response.text()
+}
+
+export async function saveBdd(content: string): Promise<void> {
+  const response = await fetch('/api/bdd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: content
+  })
+  if (!response.ok) {
+    throw new Error('Unable to save BDD test cases')
+  }
+}

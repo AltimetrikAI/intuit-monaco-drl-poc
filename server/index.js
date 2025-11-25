@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { analyzeDrl, runRuleTests } from './pipeline.js'
+import { startLSPServer } from './lsp-server.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -32,6 +33,25 @@ app.get('/api/fact', async (_req, res) => {
     res.type('application/json').send(content)
   } catch (err) {
     res.status(500).json({ message: 'Unable to load fact object', error: String(err) })
+  }
+})
+
+app.get('/api/bdd', async (_req, res) => {
+  try {
+    const content = await fs.readFile(TEST_DOC_PATH, 'utf-8')
+    res.type('text/plain').send(content)
+  } catch (err) {
+    res.status(500).json({ message: 'Unable to load BDD test cases', error: String(err) })
+  }
+})
+
+app.post('/api/bdd', async (req, res) => {
+  try {
+    const content = typeof req.body === 'string' ? req.body : ''
+    await fs.writeFile(TEST_DOC_PATH, content, 'utf-8')
+    res.status(204).send()
+  } catch (err) {
+    res.status(500).json({ message: 'Unable to save BDD test cases', error: String(err) })
   }
 })
 
@@ -68,3 +88,7 @@ const PORT = process.env.PORT || 4000
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`)
 })
+
+// Start LSP server
+const LSP_PORT = process.env.LSP_PORT || 4001
+startLSPServer(LSP_PORT)

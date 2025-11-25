@@ -10,10 +10,11 @@ then
     System.out.println("Loyalty discount applied");
 end
 
-rule "Flag high premium"
+rule "Flag high premium greater than 1000"
 when
     $quote : Quote(premium > 1000)
 then
     $quote.setRequiresReview(true);
     System.out.println("Quote requires manual review");
 end
+

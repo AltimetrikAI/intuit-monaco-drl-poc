@@ -40,3 +40,22 @@ export function jsonToTypeSchema(obj: unknown, indent = 0): string {
   return 'unknown'
 }
 
+/**
+ * Extracts a schema object mapping field names to their types
+ */
+export function extractFactSchema(factObject: Record<string, unknown>): Record<string, string> {
+  const schema: Record<string, string> = {}
+  
+  for (const [key, value] of Object.entries(factObject)) {
+    if (value === null) {
+      schema[key] = 'null'
+    } else if (Array.isArray(value)) {
+      schema[key] = 'array'
+    } else {
+      schema[key] = typeof value
+    }
+  }
+  
+  return schema
+}
+

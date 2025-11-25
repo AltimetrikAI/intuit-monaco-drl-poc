@@ -177,6 +177,27 @@ main {
   margin: 8px 0;
 }
 
+.test-cases-toggle-section {
+  margin: 8px 0;
+}
+
+.test-cases-toggle {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+  transition: color 100ms ease;
+}
+
+.test-cases-toggle:hover {
+  color: #cbd5e1;
+}
+
 .java-logs-section {
   margin-top: 12px;
   border-top: 1px solid #1f2937;
@@ -219,6 +240,93 @@ main {
   color: inherit;
   font-family: inherit;
   white-space: pre;
+}
+
+.diff-toggle {
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+}
+
+.diff-toggle:hover {
+  background: rgba(56, 189, 248, 0.25);
+}
+
+/* Modal styles for save confirmation */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-content {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  max-width: 90vw;
+  max-height: 90vh;
+  width: 1000px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #e2e8f0;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.modal-close:hover {
+  background: #1f2937;
+  color: #e2e8f0;
+}
+
+.modal-body {
+  padding: 20px;
+  overflow: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #1f2937;
 }
 
 .fact-schema {

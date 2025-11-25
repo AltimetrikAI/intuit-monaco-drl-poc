@@ -44,7 +44,7 @@ export function StatusPanel({ result, isRunning, error }: Props) {
           items={result?.tests.cases?.map((c) => ({
             type: c.status === 'passed' ? 'info' : 'error',
             text: `${c.name} — ${c.status}` + (c.details ? ` (${c.details})` : '')
-          }))}
+          })) ?? []}
           footer={result?.tests.summary}
           javaLogs={result?.tests.javaLogs}
         />
@@ -64,8 +64,12 @@ interface BlockProps {
 
 function StatusBlock({ title, status, duration, items = [], footer, javaLogs }: BlockProps) {
   const [showLogs, setShowLogs] = useState(false)
+  const [showItems, setShowItems] = useState(true)
   const badgeColor =
     status === 'passed' ? 'success' : status === 'failed' ? 'danger' : 'muted'
+  
+  const isTestBlock = title.includes('BDD') || title.includes('Test')
+  const hasItems = items.length > 0
 
   return (
     <div className="status-block">
@@ -76,14 +80,43 @@ function StatusBlock({ title, status, duration, items = [], footer, javaLogs }: 
         </span>
       </div>
       <p className="meta">{duration ? `${duration} ms` : 'awaiting run'}</p>
-      <ul className="list">
-        {items.length === 0 && <li className="muted">No messages</li>}
-        {items.map((item, idx) => (
-          <li key={idx} className={`list-${item.type}`}>
-            {item.text}
-          </li>
-        ))}
-      </ul>
+      
+      {isTestBlock && hasItems ? (
+        <>
+          <div className="test-cases-toggle-section">
+            <button
+              type="button"
+              className="test-cases-toggle"
+              onClick={() => setShowItems(!showItems)}
+            >
+              {showItems ? '▼' : '▶'} Test Cases ({items.length})
+            </button>
+          </div>
+          {showItems && (
+            <ul className="list">
+              {items.map((item, idx) => (
+                <li key={idx} className={`list-${item.type}`}>
+                  {item.text}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <ul className="list">
+          {items.length === 0 && (
+            <li className="muted">
+              {isTestBlock ? 'No test cases yet. Click "Run compile & tests" to execute tests.' : 'No messages'}
+            </li>
+          )}
+          {items.map((item, idx) => (
+            <li key={idx} className={`list-${item.type}`}>
+              {item.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      
       {footer && <p className="footer">{footer}</p>}
       {javaLogs && javaLogs.length > 0 && (
         <div className="java-logs-section">

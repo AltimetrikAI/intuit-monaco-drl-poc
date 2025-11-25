@@ -16,18 +16,23 @@
     "@monaco-editor/react": "^4.6.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^4.19.2",
     "monaco-editor": "^0.44.0",
+    "monaco-languageclient": "^10.3.0",
+    "openai": "^6.9.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "vscode-languageserver": "^9.0.1",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^22.9.3",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^8.2.2",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10",
-    "@vitejs/plugin-react": "^4.3.1"
+    "vite": "^5.4.10"
   }
 }
