@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { PipelineResult } from '../api'
 
 interface Props {
@@ -23,9 +24,18 @@ export function StatusPanel({ result, isRunning, error }: Props) {
           status={compileStatus}
           duration={result?.compile.durationMs}
           items={[
+            ...(compileStatus === 'passed' && (!result?.compile.errors || result.compile.errors.length === 0) && (!result?.compile.warnings || result.compile.warnings.length === 0)
+              ? [{ 
+                  type: 'info' as const, 
+                  text: result?.compile.firedCount !== undefined 
+                    ? `Compilation successful - ${result.compile.firedCount} rule(s) ready to execute`
+                    : 'Compilation successful - DRL rules compiled without errors'
+                }]
+              : []),
             ...(result?.compile.errors?.map((e) => ({ type: 'error' as const, text: e })) ?? []),
             ...(result?.compile.warnings?.map((w) => ({ type: 'warning' as const, text: w })) ?? [])
           ]}
+          javaLogs={result?.compile.javaLogs}
         />
         <StatusBlock
           title="BDD / Unit Tests"
@@ -36,6 +46,7 @@ export function StatusPanel({ result, isRunning, error }: Props) {
             text: `${c.name} — ${c.status}` + (c.details ? ` (${c.details})` : '')
           }))}
           footer={result?.tests.summary}
+          javaLogs={result?.tests.javaLogs}
         />
       </div>
     </div>
@@ -48,9 +59,11 @@ interface BlockProps {
   duration?: number
   items?: { type: 'error' | 'warning' | 'info'; text: string }[]
   footer?: string
+  javaLogs?: string[]
 }
 
-function StatusBlock({ title, status, duration, items = [], footer }: BlockProps) {
+function StatusBlock({ title, status, duration, items = [], footer, javaLogs }: BlockProps) {
+  const [showLogs, setShowLogs] = useState(false)
   const badgeColor =
     status === 'passed' ? 'success' : status === 'failed' ? 'danger' : 'muted'
 
@@ -72,6 +85,22 @@ function StatusBlock({ title, status, duration, items = [], footer }: BlockProps
         ))}
       </ul>
       {footer && <p className="footer">{footer}</p>}
+      {javaLogs && javaLogs.length > 0 && (
+        <div className="java-logs-section">
+          <button
+            type="button"
+            className="java-logs-toggle"
+            onClick={() => setShowLogs(!showLogs)}
+          >
+            {showLogs ? '▼' : '▶'} Java Execution Logs ({javaLogs.length} lines)
+          </button>
+          {showLogs && (
+            <pre className="java-logs">
+              <code>{javaLogs.join('\n')}</code>
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   )
 }

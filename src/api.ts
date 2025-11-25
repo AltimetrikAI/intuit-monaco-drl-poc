@@ -4,12 +4,16 @@ export interface PipelineResult {
     warnings: string[]
     errors: string[]
     durationMs: number
+    javaLogs?: string[]
+    firedRules?: string[]
+    firedCount?: number
   }
   tests: {
     status: 'passed' | 'failed'
     summary: string
     cases: { name: string; status: 'passed' | 'failed'; details?: string }[]
     durationMs: number
+    javaLogs?: string[]
   }
   timestamp: string
 }
@@ -41,6 +45,14 @@ export async function runPipeline(content: string): Promise<PipelineResult> {
   })
   if (!response.ok) {
     throw new Error('Unable to run compile/test pipeline')
+  }
+  return response.json()
+}
+
+export async function fetchFact(): Promise<Record<string, unknown>> {
+  const response = await fetch('/api/fact')
+  if (!response.ok) {
+    throw new Error('Unable to load fact object')
   }
   return response.json()
 }

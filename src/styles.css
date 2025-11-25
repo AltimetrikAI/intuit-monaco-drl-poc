@@ -107,6 +107,12 @@ main {
   gap: 16px;
 }
 
+.editor-section {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 16px;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -169,6 +175,72 @@ main {
 .error {
   color: #fecdd3;
   margin: 8px 0;
+}
+
+.java-logs-section {
+  margin-top: 12px;
+  border-top: 1px solid #1f2937;
+  padding-top: 8px;
+}
+
+.java-logs-toggle {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+  transition: color 100ms ease;
+}
+
+.java-logs-toggle:hover {
+  color: #cbd5e1;
+}
+
+.java-logs {
+  background: #0b1221;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0 0;
+  overflow-x: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #94a3b8;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.java-logs code {
+  color: inherit;
+  font-family: inherit;
+  white-space: pre;
+}
+
+.fact-schema {
+  background: #0b1221;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 0;
+  overflow-x: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.fact-schema code {
+  color: inherit;
+  font-family: inherit;
+}
+
+.fact-schema {
+  white-space: pre;
 }
 
 @media (max-width: 960px) {

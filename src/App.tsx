@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { fetchRule, runPipeline, saveRule, type PipelineResult } from './api'
 import { StatusPanel } from './components/StatusPanel'
+import { FactObjectView } from './components/FactObjectView'
 
 function App() {
   const [ruleText, setRuleText] = useState('')
@@ -71,20 +72,24 @@ function App() {
       </header>
 
       <main>
-        <div className="editor-card">
-          <div className="card-header">
-            <h2>Rule</h2>
-            <span className="muted">sample.drl</span>
+        <div className="editor-section">
+          <div className="editor-card">
+            <div className="card-header">
+              <h2>Rule</h2>
+              <span className="muted">sample.drl</span>
+            </div>
+            <Editor
+              height="480px"
+              defaultLanguage="java"
+              theme="vs-dark"
+              value={ruleText}
+              onChange={(value) => setRuleText(value ?? '')}
+              options={monacoOptions}
+            />
+            {loading && <p className="muted">Loading rule…</p>}
           </div>
-          <Editor
-            height="480px"
-            defaultLanguage="java"
-            theme="vs-dark"
-            value={ruleText}
-            onChange={(value) => setRuleText(value ?? '')}
-            options={monacoOptions}
-          />
-          {loading && <p className="muted">Loading rule…</p>}
+
+          <FactObjectView />
         </div>
 
         <StatusPanel result={status} isRunning={running} error={error} />

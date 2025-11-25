@@ -18,12 +18,32 @@ A lightweight playground that loads a DRL file into a Monaco editor, lets you ed
 Both phases return timing + messages so the UI can render status chips and any warnings/errors.
 
 ## Getting started
-> **Note:** Installing npm packages requires access to the npm registry. If your environment blocks it, mirror the packages or set the correct npm registry before running `npm install`.
 
+### Prerequisites
+- Node.js 18+
+- Java 11+ (for Drools runtime)
+- Maven 3.6+ (for building Drools executor)
+
+### Setup
+
+1. **Install Node.js dependencies:**
 ```bash
 npm install
+```
+
+2. **Build the Drools Java executor (required for real rule execution):**
+```bash
+cd java
+mvn clean package
+cd ..
+```
+
+3. **Start the development servers:**
+```bash
 npm run dev        # starts Express on :4000 and Vite on :5173 via proxy
 ```
+
+> **Note:** If the Java executor is not built, the system will fall back to basic validation. For full Drools rule execution, you must build the Java project first.
 
 ### Building for production
 ```bash
@@ -43,8 +63,35 @@ npm run preview    # serves the built UI on :4173 (API proxy still targets :4000
 - `POST /api/drl` – saves raw DRL text.
 - `POST /api/run` – runs the mock compile/test pipeline and returns structured results.
 
-## Extending toward real Drools execution
-- Swap `server/pipeline.js` for a process that shells out to Maven/Gradle to build and execute Drools.
-- Replace the heuristic tests with calls into your BDD runner (e.g., Cucumber) or unit tests.
-- Point `RULE_PATH`, `FACT_PATH`, and `TEST_DOC_PATH` at your configuration repository checkout.
+## Drools Runtime Integration
+
+The project now includes a real Drools runtime executor! The Java-based executor (`java/`) compiles and executes DRL rules against fact objects.
+
+### How it works
+
+1. **Compile phase:** The DRL content is compiled using Drools KieBuilder, which validates syntax and checks for errors.
+2. **Execution phase:** Rules are executed against the fact object, and the results show:
+   - Which rules fired
+   - How the fact object was modified
+   - Execution timing and any warnings
+
+### Building the Drools Executor
+
+```bash
+cd java
+mvn clean package
+```
+
+This creates a JAR file with all dependencies that the Node.js server uses to execute rules.
+
+### Fallback Mode
+
+If the Java executor is not built, the system automatically falls back to basic regex-based validation. This allows development of the UI without requiring Java/Maven setup.
+
+## Extending
+
+- Add more fact types by creating Java model classes in `java/src/main/java/com/example/model/`
+- Update the DroolsExecutor to handle multiple fact types
+- Integrate with BDD runners (e.g., Cucumber) for more comprehensive testing
+- Point `RULE_PATH`, `FACT_PATH`, and `TEST_DOC_PATH` at your configuration repository checkout
 

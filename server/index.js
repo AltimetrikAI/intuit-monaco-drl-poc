@@ -26,6 +26,15 @@ app.get('/api/drl', async (_req, res) => {
   }
 })
 
+app.get('/api/fact', async (_req, res) => {
+  try {
+    const content = await fs.readFile(FACT_PATH, 'utf-8')
+    res.type('application/json').send(content)
+  } catch (err) {
+    res.status(500).json({ message: 'Unable to load fact object', error: String(err) })
+  }
+})
+
 app.post('/api/drl', async (req, res) => {
   try {
     const content = typeof req.body === 'string' ? req.body : ''
@@ -38,7 +47,7 @@ app.post('/api/drl', async (req, res) => {
 
 app.post('/api/run', async (req, res) => {
   const content = req.body?.content ?? ''
-  const compile = await analyzeDrl(content)
+  const compile = await analyzeDrl(content, FACT_PATH)
   const tests = await runRuleTests(content, FACT_PATH, TEST_DOC_PATH)
 
   res.json({

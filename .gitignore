@@ -4,3 +4,9 @@ node_modules
 dist
 npm-debug.log*
 .env
+
+# Java build artifacts
+java/target/
+*.class
+*.jar
+!java/target/.gitkeep

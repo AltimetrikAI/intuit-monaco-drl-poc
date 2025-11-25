@@ -1,32 +1,66 @@
 import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
-export async function analyzeDrl(content) {
+import { executeDroolsRules } from './droolsExecutor.js'
+
+export async function analyzeDrl(content, factPath) {
   const start = performance.now()
-  const errors = []
-  const warnings = []
+  
+  // Try to use real Drools execution if available
+  try {
+    const factText = await fs.readFile(factPath, 'utf-8')
+    const droolsResult = await executeDroolsRules(content, factText)
+    
+    return {
+      status: droolsResult.status === 'passed' ? 'passed' : 'failed',
+      warnings: droolsResult.warnings || [],
+      errors: droolsResult.errors || [],
+      durationMs: droolsResult.durationMs || Math.round(performance.now() - start),
+      firedRules: droolsResult.firedRules || [],
+      firedCount: droolsResult.firedCount,
+      factAfter: droolsResult.factAfter,
+      javaLogs: droolsResult.javaLogs || []
+    }
+  } catch (err) {
+    // Fall back to basic validation if Drools is not available
+    const errors = []
+    const warnings = []
+    
+    // Log the actual error for debugging
+    console.error('[Pipeline] Drools execution error:', err.message)
+    
+    if (err.message.includes('Drools JAR not found')) {
+      warnings.push('Drools runtime not available - using basic validation. Build Java project: cd java && mvn clean package')
+    } else if (err.message.includes('Java') || err.message.includes('ENOENT') || err.message.includes('spawn')) {
+      warnings.push(`Drools runtime not available - Java not found. Error: ${err.message}. Make sure Java is installed and in PATH.`)
+    } else {
+      // For other errors, show them as warnings but still fall back
+      warnings.push(`Drools execution issue: ${err.message}. Falling back to basic validation.`)
+    }
 
-  if (!content || !content.trim()) {
-    errors.push('Rule file is empty')
-  }
+    // Basic validation fallback
+    if (!content || !content.trim()) {
+      errors.push('Rule file is empty')
+    }
 
-  if (!/\brule\b/i.test(content)) {
-    errors.push('No rule definitions were detected')
-  }
+    if (!/\brule\b/i.test(content)) {
+      errors.push('No rule definitions were detected')
+    }
 
-  if (!/package\s+.+;/i.test(content)) {
-    warnings.push('Missing package declaration')
-  }
+    if (!/package\s+\S+/i.test(content)) {
+      warnings.push('Missing package declaration')
+    }
 
-  if (!/import\s+.+Quote/i.test(content)) {
-    warnings.push('Fact import for Quote not found; update imports when changing fact types.')
-  }
+    if (!/import\s+.+Quote/i.test(content)) {
+      warnings.push('Fact import for Quote not found; update imports when changing fact types.')
+    }
 
-  const durationMs = Math.round(performance.now() - start)
-  return {
-    status: errors.length ? 'failed' : 'passed',
-    warnings,
-    errors,
-    durationMs
+    const durationMs = Math.round(performance.now() - start)
+    return {
+      status: errors.length ? 'failed' : 'passed',
+      warnings,
+      errors,
+      durationMs
+    }
   }
 }
 
@@ -35,41 +69,113 @@ export async function runRuleTests(content, factPath, testDocPath) {
   const cases = []
   let status = 'passed'
 
-  const factText = await fs.readFile(factPath, 'utf-8')
-  const fact = JSON.parse(factText)
+  try {
+    // Use real Drools execution
+    const factText = await fs.readFile(factPath, 'utf-8')
+    const fact = JSON.parse(factText)
+    const droolsResult = await executeDroolsRules(content, factText)
 
-  const loyaltyCase = content.includes('loyalCustomer')
-  cases.push({
-    name: 'Loyalty discount',
-    status: loyaltyCase ? 'passed' : 'failed',
-    details: loyaltyCase
-      ? `applies 10% when loyalCustomer=true (example premium ${fact.premium})`
-      : 'No loyalty rule found'
-  })
-  if (!loyaltyCase) status = 'failed'
+    // Create test cases based on Drools execution
+    if (droolsResult.firedCount > 0) {
+      cases.push({
+        name: 'Rules executed',
+        status: 'passed',
+        details: `Fired ${droolsResult.firedCount} rule(s)`
+      })
 
-  const premiumCase = /premium\s*>\s*1000/.test(content)
-  cases.push({
-    name: 'High premium flag',
-    status: premiumCase ? 'passed' : 'failed',
-    details: premiumCase
-      ? 'flags quotes requiring review'
-      : 'Rule missing premium threshold > 1000'
-  })
-  if (!premiumCase) status = 'failed'
+      // Check if fact was modified (rules fired)
+      if (droolsResult.factAfter) {
+        const factAfter = JSON.parse(droolsResult.factAfter)
+        const factBefore = fact
 
-  const docExists = await fileExists(testDocPath)
-  const summary = docExists
-    ? 'BDD scenarios documented in data/tests/bdd-tests.md'
-    : 'BDD scenarios not found; add them under data/tests'
+        if (factAfter.discount !== factBefore.discount) {
+          cases.push({
+            name: 'Loyalty discount applied',
+            status: 'passed',
+            details: `Discount changed from ${factBefore.discount} to ${factAfter.discount}`
+          })
+        }
 
-  const durationMs = Math.round(performance.now() - start)
+        if (factAfter.requiresReview !== factBefore.requiresReview) {
+          cases.push({
+            name: 'Review flag set',
+            status: 'passed',
+            details: `Requires review: ${factAfter.requiresReview}`
+          })
+        }
+      }
 
-  return {
-    status,
-    summary,
-    cases,
-    durationMs
+      // Add fired rules info
+      if (droolsResult.firedRules && droolsResult.firedRules.length > 0) {
+        droolsResult.firedRules.forEach((rule, idx) => {
+          cases.push({
+            name: `Rule execution ${idx + 1}`,
+            status: 'passed',
+            details: rule
+          })
+        })
+      }
+    } else {
+      cases.push({
+        name: 'No rules fired',
+        status: 'failed',
+        details: 'No rules matched the fact object'
+      })
+      status = 'failed'
+    }
+
+    const docExists = await fileExists(testDocPath)
+    const summary = docExists
+      ? 'BDD scenarios documented in data/tests/bdd-tests.md'
+      : 'BDD scenarios not found; add them under data/tests'
+
+    const durationMs = droolsResult.durationMs || Math.round(performance.now() - start)
+
+    return {
+      status,
+      summary,
+      cases,
+      durationMs,
+      javaLogs: droolsResult.javaLogs || []
+    }
+  } catch (err) {
+    // Fall back to heuristic tests if Drools is not available
+    const factText = await fs.readFile(factPath, 'utf-8')
+    const fact = JSON.parse(factText)
+
+    const loyaltyCase = content.includes('loyalCustomer')
+    cases.push({
+      name: 'Loyalty discount',
+      status: loyaltyCase ? 'passed' : 'failed',
+      details: loyaltyCase
+        ? `applies 10% when loyalCustomer=true (example premium ${fact.premium})`
+        : 'No loyalty rule found'
+    })
+    if (!loyaltyCase) status = 'failed'
+
+    const premiumCase = /premium\s*>\s*1000/.test(content)
+    cases.push({
+      name: 'High premium flag',
+      status: premiumCase ? 'passed' : 'failed',
+      details: premiumCase
+        ? 'flags quotes requiring review'
+        : 'Rule missing premium threshold > 1000'
+    })
+    if (!premiumCase) status = 'failed'
+
+    const docExists = await fileExists(testDocPath)
+    const summary = docExists
+      ? 'BDD scenarios documented in data/tests/bdd-tests.md'
+      : 'BDD scenarios not found; add them under data/tests'
+
+    const durationMs = Math.round(performance.now() - start)
+
+    return {
+      status,
+      summary,
+      cases,
+      durationMs
+    }
   }
 }
 
