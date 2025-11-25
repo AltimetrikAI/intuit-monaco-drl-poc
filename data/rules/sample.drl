@@ -1,0 +1,19 @@
+package com.example.pricing
+
+import com.example.model.Quote
+
+rule "Apply loyalty discount"
+when
+    $quote : Quote(loyalCustomer == true)
+then
+    $quote.setDiscount(0.1);
+    System.out.println("Loyalty discount applied");
+end
+
+rule "Flag high premium"
+when
+    $quote : Quote(premium > 1000)
+then
+    $quote.setRequiresReview(true);
+    System.out.println("Quote requires manual review");
+end
