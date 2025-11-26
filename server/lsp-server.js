@@ -394,11 +394,27 @@ export function startLSPServer(port = 4001) {
           const line = position.line + 1 // Convert to 1-based for display
           const char = position.character + 1
           
-          console.log(`[LSP] ========================================`)
-          console.log(`[LSP] 🔍 COMPLETION REQUEST RECEIVED`)
-          console.log(`[LSP] ----------------------------------------`)
+          // Check request mode first to differentiate between create and modify
+          const requestMode = message.params?.mode || 'generate' // Default to 'generate' if not specified
+          const isModifyMode = requestMode === 'modify'
+          const isGenerateMode = requestMode === 'generate'
+          
+          // Clear visual differentiation in logs
+          if (isModifyMode) {
+            console.log(`[LSP] ========================================`)
+            console.log(`[LSP] 🔄 MODIFY RULE REQUEST (UPDATE EXISTING)`)
+            console.log(`[LSP] ========================================`)
+          } else {
+            console.log(`[LSP] ========================================`)
+            console.log(`[LSP] ✨ CREATE RULE REQUEST (GENERATE NEW)`)
+            console.log(`[LSP] ========================================`)
+          }
           console.log(`[LSP] Request ID: ${message.id}`)
+          console.log(`[LSP] Request Mode: ${requestMode.toUpperCase()}`)
           console.log(`[LSP] Position: Line ${line}, Column ${char} (0-based: ${position.line}, ${position.character})`)
+          
+          const userPrompt = message.params?.userPrompt
+          const existingRule = message.params?.existingRule
           
           // Get context around cursor (if session has document content)
           const documentContent = session.documentContent || ''
@@ -407,12 +423,82 @@ export function startLSPServer(port = 4001) {
           const beforeCursor = currentLine.substring(0, position.character)
           const afterCursor = currentLine.substring(position.character)
           
-          console.log(`[LSP] Context around cursor:`)
-          console.log(`[LSP]   Before: "${beforeCursor}"`)
-          console.log(`[LSP]   After:  "${afterCursor}"`)
-          console.log(`[LSP]   Full line: "${currentLine}"`)
+          if (isGenerateMode) {
+            console.log(`[LSP] Context around cursor:`)
+            console.log(`[LSP]   Before: "${beforeCursor}"`)
+            console.log(`[LSP]   After:  "${afterCursor}"`)
+            console.log(`[LSP]   Full line: "${currentLine}"`)
+          }
           
-          // Build completions from reusable rule templates
+          if (isModifyMode) {
+            console.log(`[LSP] ----------------------------------------`)
+            console.log(`[LSP] 📝 MODIFY DETAILS:`)
+            console.log(`[LSP]   - Modify prompt: "${userPrompt}"`)
+            console.log(`[LSP]   - Existing rule length: ${existingRule ? existingRule.length : 0} chars`)
+            
+            // For now, return a mock modified rule
+            // In the future, this will use AI to modify the rule based on the prompt
+            const mockModifiedRule = existingRule 
+              ? existingRule.replace(/premium > 500/g, 'premium > 1000') // Simple mock modification
+              : `rule "Modified Rule"
+
+when
+    $quote : Quote(premium > 1000)
+
+then
+    $quote.setRequiresReview(true);
+    System.out.println("Quote requires case review - modified");
+
+end`
+            
+            const completions = [{
+              label: 'Modified Rule',
+              kind: 14, // Snippet
+              detail: 'Modified DRL Rule',
+              insertText: mockModifiedRule,
+              insertTextRules: 4, // Snippet mode
+              documentation: {
+                value: `Modified rule based on: ${userPrompt || 'user request'}`
+              }
+            }]
+            
+            console.log(`[LSP]   - Returning modified rule (${mockModifiedRule.length} chars)`)
+            console.log(`[LSP] ----------------------------------------`)
+            console.log(`[LSP] 📋 MODIFIED RULE SUGGESTIONS TO SEND:`)
+            console.log(`[LSP]   Total items: ${completions.length}`)
+            completions.forEach((item, index) => {
+              console.log(`[LSP]   Item ${index + 1}:`)
+              console.log(`[LSP]     - Label: "${item.label}"`)
+              console.log(`[LSP]     - Kind: ${item.kind} (Snippet)`)
+              console.log(`[LSP]     - Detail: "${item.detail}"`)
+              console.log(`[LSP]     - Insert Text Length: ${item.insertText.length} characters`)
+            })
+            
+            const response = {
+              jsonrpc: '2.0',
+              id: message.id,
+              result: { items: completions }
+            }
+            
+            ws.send(JSON.stringify(response))
+            console.log(`[LSP] 📤 MODIFY RESPONSE SENT:`)
+            console.log(`[LSP]   Response ID: ${message.id}`)
+            console.log(`[LSP]   Items count: ${completions.length}`)
+            console.log(`[LSP] ========================================`)
+            return
+          }
+          
+          // Handle GENERATE mode (create new rule)
+          if (isGenerateMode) {
+            console.log(`[LSP] ----------------------------------------`)
+            // Check for user prompt (for future AI generation)
+            if (userPrompt) {
+              console.log(`[LSP] 📝 CREATE DETAILS:`)
+              console.log(`[LSP]   - Generate prompt: "${userPrompt}"`)
+              console.log(`[LSP]   (Note: Currently using mock response, but prompt is logged for future AI integration)`)
+            }
+            
+            // Build completions from reusable rule templates
           // 
           // FUTURE USAGE EXAMPLES:
           // 
@@ -472,12 +558,13 @@ export function startLSPServer(port = 4001) {
           
           ws.send(JSON.stringify(response))
           console.log(`[LSP] ----------------------------------------`)
-          console.log(`[LSP] 📤 RESPONSE SENT:`)
+          console.log(`[LSP] 📤 CREATE RESPONSE SENT:`)
           console.log(`[LSP]   Response ID: ${message.id}`)
           console.log(`[LSP]   Items count: ${completions.length}`)
           console.log(`[LSP]   Response size: ${JSON.stringify(response).length} bytes`)
           console.log(`[LSP] ========================================`)
           return
+          }
         }
         
         // Log unknown message types

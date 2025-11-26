@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import Editor, { DiffEditor, OnMount, DiffOnMount } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
-import { initializeLSP, sendDocumentContent, disconnectLSP, triggerCompletion, setOnSuggestionsReady } from '../utils/lsp-client'
+import { initializeLSP, sendDocumentContent, disconnectLSP, triggerCompletion, setOnSuggestionsReady, setOnShowGenerateDialog, replaceRuleInEditor, triggerModifyRule } from '../utils/lsp-client'
 import { extractFactSchema } from '../utils/factSchema'
 
 /**
@@ -79,6 +79,12 @@ export function EditorWithDiff({
   const [lspReady, setLspReady] = useState(false) // Use state instead of ref for button
   const [suggestions, setSuggestions] = useState<monaco.languages.CompletionItem[]>([])
   const [showSuggestionsDropdown, setShowSuggestionsDropdown] = useState(false)
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false)
+  const [generatePrompt, setGeneratePrompt] = useState('')
+  const [dialogMode, setDialogMode] = useState<'generate' | 'modify'>('generate')
+  const [existingRule, setExistingRule] = useState<string | null>(null)
+  const [modifyPrompt, setModifyPrompt] = useState('') // Separate prompt for modify mode
+  const [ruleContext, setRuleContext] = useState<{startLine: number, endLine: number, startColumn: number, endColumn: number} | null>(null) // Store rule position for replacement
   const [editorMounted, setEditorMounted] = useState(false) // Track when editor is mounted
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const lspInitialized = useRef(false)
@@ -169,21 +175,31 @@ export function EditorWithDiff({
       return
     }
     
-    console.log('[Editor] LSP initialization check:', {
-      enableLSP,
-      language,
-      hasEditor: !!editorRef.current,
-      editorMounted,
-      alreadyInitialized: lspInitialized.current,
-      hasFactObject: !!factObject,
-      bddTestsDefined: bddTests !== undefined
-    })
+    // Only log if LSP is enabled and language is java (to reduce noise)
+    if (enableLSP && language === 'java') {
+      console.log('[Editor] LSP initialization check:', {
+        enableLSP,
+        language,
+        hasEditor: !!editorRef.current,
+        editorMounted,
+        alreadyInitialized: lspInitialized.current,
+        hasFactObject: !!factObject,
+        bddTestsDefined: bddTests !== undefined
+      })
+    }
     
     if (!enableLSP || language !== 'java' || !editorRef.current || lspInitialized.current) {
-      if (!enableLSP) console.log('[Editor] LSP disabled')
-      if (language !== 'java') console.log('[Editor] Language is not java:', language)
-      if (!editorRef.current) console.log('[Editor] Editor ref not available')
-      if (lspInitialized.current) console.log('[Editor] LSP already initialized')
+      // Only log if LSP is enabled but conditions aren't met (to reduce noise from other editors)
+      if (enableLSP && language !== 'java') {
+        // Silently skip - this is expected for non-java editors (e.g., markdown in diff view)
+        return
+      }
+      if (enableLSP && !editorRef.current) {
+        console.log('[Editor] Editor ref not available')
+      }
+      if (lspInitialized.current) {
+        console.log('[Editor] LSP already initialized')
+      }
       return
     }
 
@@ -218,14 +234,141 @@ export function EditorWithDiff({
   // Handle Escape key to close suggestions dropdown
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && showSuggestionsDropdown) {
-        setShowSuggestionsDropdown(false)
-        setSuggestions([])
+      if (e.key === 'Escape') {
+        if (showSuggestionsDropdown) {
+          setShowSuggestionsDropdown(false)
+          setSuggestions([])
+        }
+        if (showGenerateDialog) {
+          setShowGenerateDialog(false)
+          setGeneratePrompt('')
+          setModifyPrompt('')
+          setExistingRule(null)
+          setRuleContext(null)
+          setDialogMode('generate')
+        }
       }
     }
     window.addEventListener('keydown', handleEscape)
     return () => window.removeEventListener('keydown', handleEscape)
-  }, [showSuggestionsDropdown])
+  }, [showSuggestionsDropdown, showGenerateDialog])
+
+  // Register callback for right-click context menu trigger
+  useEffect(() => {
+    const showDialog = (mode: 'generate' | 'modify', existingRuleText?: string, ruleCtx?: any) => {
+      console.log('[Editor] 📢 Show dialog callback called from right-click')
+      console.log('[Editor]   - Mode:', mode)
+      console.log('[Editor]   - Existing rule:', existingRuleText ? `${existingRuleText.length} chars` : 'none')
+      console.log('[Editor]   - Rule context:', ruleCtx ? `Lines ${ruleCtx.startLine}-${ruleCtx.endLine}` : 'none')
+      
+      setDialogMode(mode)
+      if (mode === 'modify' && existingRuleText) {
+        setExistingRule(existingRuleText)
+        setRuleContext(ruleCtx || null)
+        setGeneratePrompt('') // Clear generate prompt
+        setModifyPrompt('') // Clear modify prompt
+      } else {
+        setExistingRule(null)
+        setRuleContext(null)
+        setGeneratePrompt('') // Clear for generate mode
+        setModifyPrompt('')
+      }
+      setShowGenerateDialog(true)
+      console.log('[Editor] ✅ Dialog state set to true')
+    }
+    
+    // Register callback with LSP client
+    setOnShowGenerateDialog(showDialog)
+    console.log('[Editor] ✅ Registered show dialog callback with LSP client')
+    
+    // Also listen for custom event as fallback
+    const handleShowDialog = (event: Event) => {
+      console.log('[Editor] 📢 Received show-generate-dialog event (fallback)')
+      event.stopPropagation()
+      setDialogMode('generate')
+      setExistingRule(null)
+      setGeneratePrompt('')
+      setShowGenerateDialog(true)
+    }
+    window.addEventListener('show-generate-dialog', handleShowDialog)
+    
+    return () => {
+      setOnShowGenerateDialog(() => {}) // Clear callback
+      window.removeEventListener('show-generate-dialog', handleShowDialog)
+      console.log('[Editor] 🛑 Cleaned up show dialog handlers')
+    }
+  }, [])
+
+  // Handle generate/modify dialog submission
+  const handleGenerateSubmit = () => {
+    if (dialogMode === 'modify') {
+      // Modify mode: need modify prompt
+      if (!modifyPrompt.trim()) {
+        console.log('[Editor] ⚠️  Cannot submit: modification prompt is empty')
+        return
+      }
+      
+      const prompt = modifyPrompt.trim()
+      const currentRuleContext = ruleContext
+      console.log('[Editor] 📝 Modify dialog submission:')
+      console.log('[Editor]   - Modification prompt:', prompt)
+      console.log('[Editor]   - Existing rule:', existingRule ? `${existingRule.length} chars` : 'none')
+      
+      // Close dialog first
+      setShowGenerateDialog(false)
+      const currentPrompt = prompt
+      const currentContext = currentRuleContext
+      setModifyPrompt('')
+      setExistingRule(null)
+      setRuleContext(null)
+      setDialogMode('generate')
+      
+      // Send modify request to LSP
+      setTimeout(() => {
+        if (editorRef.current && currentContext && existingRule) {
+          sendModifyRequest(editorRef.current, currentPrompt, currentContext, existingRule)
+        } else {
+          console.warn('[Editor] Editor ref, rule context, or existing rule not available')
+        }
+      }, 100)
+    } else {
+      // Generate mode: need generate prompt
+      if (!generatePrompt.trim()) {
+        console.log('[Editor] ⚠️  Cannot submit: prompt is empty')
+        return
+      }
+      
+      const prompt = generatePrompt.trim()
+      console.log('[Editor] 📝 Generate dialog submission:')
+      console.log('[Editor]   - Prompt:', prompt.substring(0, 50) + '...')
+      
+      // Close dialog first
+      setShowGenerateDialog(false)
+      const currentPrompt = prompt
+      setGeneratePrompt('')
+      
+      // Small delay to ensure dialog closes before triggering completion
+      setTimeout(() => {
+        if (editorRef.current) {
+          triggerCompletion(editorRef.current, currentPrompt)
+        } else {
+          console.warn('[Editor] Editor ref not available')
+          triggerCompletion(undefined, currentPrompt)
+        }
+      }, 100)
+    }
+  }
+  
+  // Send modify request to LSP server
+  const sendModifyRequest = (
+    editor: monaco.editor.IStandaloneCodeEditor,
+    modifyPrompt: string,
+    ruleCtx: {startLine: number, endLine: number, startColumn: number, endColumn: number},
+    existingRuleText: string
+  ) => {
+    console.log('[Editor] 🔄 Sending modify request to LSP server')
+    triggerModifyRule(editor, modifyPrompt, ruleCtx, existingRuleText)
+  }
 
   // Cleanup LSP on unmount
   useEffect(() => {
@@ -283,32 +426,234 @@ export function EditorWithDiff({
     })
   }
 
-  const handleSuggestionSelect = (suggestion: monaco.languages.CompletionItem) => {
+  const handleSuggestionSelect = (suggestion: monaco.languages.CompletionItem, event?: React.MouseEvent) => {
+    // Stop event propagation to prevent backdrop click
+    if (event) {
+      event.stopPropagation()
+      event.preventDefault()
+    }
+    
+    // Close dropdown immediately
+    setShowSuggestionsDropdown(false)
+    setSuggestions([])
+    
     if (editorRef.current) {
       const editor = editorRef.current
       const model = editor.getModel()
-      const position = editor.getPosition()
       
-      if (model && position && suggestion.insertText) {
-        const range = new monaco.Range(
-          position.lineNumber,
-          position.column,
-          position.lineNumber,
-          position.column
-        )
-        editor.executeEdits('lsp-suggestion', [{
-          range,
-          text: suggestion.insertText
-        }])
-        console.log('[Editor] ✅ Inserted suggestion:', suggestion.label)
+      if (model && suggestion.insertText) {
+        // Check if this is a modify suggestion (has range with start/end lines)
+        const suggestionRange = suggestion.range as any
+        if (suggestionRange && suggestionRange.startLineNumber && suggestionRange.endLineNumber && 
+            suggestionRange.startLineNumber !== suggestionRange.endLineNumber) {
+          // This is a modify suggestion - replace the rule
+          console.log('[Editor] 🔄 Replacing rule with modified version')
+          const range = new monaco.Range(
+            suggestionRange.startLineNumber,
+            suggestionRange.startColumn || 1,
+            suggestionRange.endLineNumber,
+            suggestionRange.endColumn || 1000
+          )
+          editor.executeEdits('lsp-modify-rule', [{
+            range,
+            text: suggestion.insertText
+          }])
+          console.log('[Editor] ✅ Rule replaced with modified version:', suggestion.label)
+        } else {
+          // This is a generate suggestion - insert at cursor
+          const position = editor.getPosition()
+          if (position) {
+            const range = new monaco.Range(
+              position.lineNumber,
+              position.column,
+              position.lineNumber,
+              position.column
+            )
+            editor.executeEdits('lsp-suggestion', [{
+              range,
+              text: suggestion.insertText
+            }])
+            console.log('[Editor] ✅ Inserted suggestion:', suggestion.label)
+          }
+        }
       }
     }
-    setShowSuggestionsDropdown(false)
-    setSuggestions([])
   }
 
   return (
     <>
+      {/* Generate Rule Input Dialog */}
+      {showGenerateDialog && (
+        <>
+          {/* Backdrop */}
+          <div 
+            onClick={() => {
+              setShowGenerateDialog(false)
+              setGeneratePrompt('')
+              setModifyPrompt('')
+              setExistingRule(null)
+              setRuleContext(null)
+              setDialogMode('generate')
+            }}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              zIndex: 9999
+            }}
+          />
+          {/* Dialog */}
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              zIndex: 10000,
+              backgroundColor: '#1e1e1e',
+              border: '1px solid #3c3c3c',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              width: '500px',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              padding: '20px'
+            }}
+          >
+            <div style={{ marginBottom: '16px' }}>
+              <h3 style={{ margin: '0 0 8px 0', color: '#ffffff', fontSize: '18px', fontWeight: '600' }}>
+                {dialogMode === 'modify' ? '✏️ Modify DRL Rule' : '✨ Generate DRL Rule'}
+              </h3>
+              <p style={{ margin: '0', color: '#858585', fontSize: '13px' }}>
+                {dialogMode === 'modify' 
+                  ? 'Describe what changes you want to make to the rule below' 
+                  : 'Describe what rule you want to generate'}
+              </p>
+            </div>
+            
+            {/* Show existing rule in modify mode */}
+            {dialogMode === 'modify' && existingRule && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#858585', fontWeight: '500' }}>
+                  Current Rule:
+                </div>
+                <div style={{
+                  padding: '12px',
+                  backgroundColor: '#252526',
+                  border: '1px solid #3c3c3c',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  color: '#a8d8a8',
+                  whiteSpace: 'pre-wrap',
+                  maxHeight: '200px',
+                  overflow: 'auto',
+                  lineHeight: '1.5'
+                }}>
+                  {existingRule}
+                </div>
+              </div>
+            )}
+            
+            {/* Input field - different for generate vs modify */}
+            {dialogMode === 'modify' ? (
+              <textarea
+                value={modifyPrompt}
+                onChange={(e) => setModifyPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleGenerateSubmit()
+                  }
+                }}
+                placeholder="e.g., Change the premium threshold from 500 to 1000, or add a new condition..."
+                style={{
+                  width: '100%',
+                  minHeight: '80px',
+                  padding: '12px',
+                  backgroundColor: '#252526',
+                  color: '#cccccc',
+                  border: '1px solid #3c3c3c',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  marginBottom: '16px',
+                  outline: 'none'
+                }}
+                autoFocus
+              />
+            ) : (
+              <textarea
+                value={generatePrompt}
+                onChange={(e) => setGeneratePrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleGenerateSubmit()
+                  }
+                }}
+                placeholder="e.g., Flag quotes with premium greater than 500 for review"
+                style={{
+                  width: '100%',
+                  minHeight: '100px',
+                  padding: '12px',
+                  backgroundColor: '#252526',
+                  color: '#cccccc',
+                  border: '1px solid #3c3c3c',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  marginBottom: '16px',
+                  outline: 'none'
+                }}
+                autoFocus
+              />
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                onClick={() => {
+                  setShowGenerateDialog(false)
+                  setGeneratePrompt('')
+                }}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  backgroundColor: 'transparent',
+                  color: '#cccccc',
+                  border: '1px solid #3c3c3c',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerateSubmit}
+                disabled={dialogMode === 'modify' ? !modifyPrompt.trim() : !generatePrompt.trim()}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  backgroundColor: (dialogMode === 'modify' ? modifyPrompt.trim() : generatePrompt.trim()) ? '#3b82f6' : '#9ca3af',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: (dialogMode === 'modify' ? modifyPrompt.trim() : generatePrompt.trim()) ? 'pointer' : 'not-allowed',
+                  fontWeight: '500'
+                }}
+              >
+                {dialogMode === 'modify' ? 'Update Rule' : 'Generate'}
+              </button>
+            </div>
+            <div style={{ marginTop: '12px', fontSize: '11px', color: '#6a6a6a', textAlign: 'center' }}>
+              Press Ctrl+Enter (Cmd+Enter on Mac) to submit
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Custom Suggestions Dropdown */}
       {showSuggestionsDropdown && suggestions.length > 0 && (
         <>
@@ -353,7 +698,10 @@ export function EditorWithDiff({
           {suggestions.map((suggestion, index) => (
             <div
               key={index}
-              onClick={() => handleSuggestionSelect(suggestion)}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleSuggestionSelect(suggestion, e)
+              }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = '#2a2d2e'
               }}
@@ -403,7 +751,11 @@ export function EditorWithDiff({
             </div>
           ))}
           <div 
-            onClick={() => setShowSuggestionsDropdown(false)}
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowSuggestionsDropdown(false)
+              setSuggestions([])
+            }}
             style={{
               padding: '6px 12px',
               borderTop: '1px solid #3c3c3c',
@@ -437,28 +789,30 @@ export function EditorWithDiff({
             {enableLSP && language === 'java' && (
               <button
                 type="button"
-                onClick={() => {
-                  if (editorRef.current) {
-                    triggerCompletion(editorRef.current)
-                  } else {
-                    console.warn('[Editor] Editor ref not available')
-                    triggerCompletion() // Fallback to global ref
-                  }
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Disabled - using right-click context menu instead
+                  console.log('[Editor] ✨ AI button clicked (disabled - use right-click context menu)')
                 }}
-                disabled={!lspReady}
+                disabled={true}
                 style={{ 
-                  padding: '6px 12px', 
-                  fontSize: '12px', 
+                  padding: '8px 10px', 
+                  fontSize: '18px', 
                   backgroundColor: lspReady ? '#3b82f6' : '#9ca3af', 
                   color: 'white', 
                   border: 'none', 
                   borderRadius: '4px', 
                   cursor: lspReady ? 'pointer' : 'not-allowed',
-                  opacity: lspReady ? 1 : 0.6
+                  opacity: lspReady ? 1 : 0.6,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minWidth: '36px',
+                  height: '36px'
                 }}
-                title={lspReady ? "Generate Rule Snippet (Ctrl+Space)" : "Waiting for LSP initialization..."}
+                title="AI button disabled - Use right-click context menu (Generate Rule / Modify Rule)"
               >
-                Generate Rule
+                ✨
               </button>
             )}
             <button

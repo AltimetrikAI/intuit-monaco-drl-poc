@@ -4,6 +4,100 @@ let ws: WebSocket | null = null
 let completionProvider: monaco.IDisposable | null = null
 let isConnected = false
 let pendingSuggestions: monaco.languages.CompletionItem[] | null = null
+let pendingModifyRuleContext: {ruleContext: RuleContext, existingRule: string} | null = null // Store rule context for modify replacement
+let onShowGenerateDialog: ((mode: 'generate' | 'modify', existingRule?: string, ruleContext?: RuleContext) => void) | null = null
+
+/**
+ * Rule context information
+ */
+interface RuleContext {
+  fullRule: string
+  ruleName: string
+  startLine: number
+  endLine: number
+  startColumn: number
+  endColumn: number
+  isInsideRule: boolean
+}
+
+/**
+ * Detect if cursor position is inside a DRL rule
+ * Returns rule context if inside a rule, null otherwise
+ */
+function detectRuleAtPosition(
+  model: monaco.editor.ITextModel,
+  position: monaco.Position
+): RuleContext | null {
+  const content = model.getValue()
+  const lines = content.split('\n')
+  const currentLineNum = position.lineNumber - 1 // Convert to 0-based
+  
+  // Find the rule that contains this position
+  let ruleStartLine = -1
+  let ruleEndLine = -1
+  let ruleName = ''
+  let inRule = false
+  let braceCount = 0
+  
+  // Search backwards from current line to find rule start
+  for (let i = currentLineNum; i >= 0; i--) {
+    const line = lines[i]
+    const ruleMatch = line.match(/^\s*rule\s+"([^"]+)"/i)
+    if (ruleMatch) {
+      ruleStartLine = i
+      ruleName = ruleMatch[1]
+      inRule = true
+      break
+    }
+  }
+  
+  if (!inRule) {
+    return null
+  }
+  
+  // Search forwards from rule start to find matching 'end'
+  for (let i = ruleStartLine; i < lines.length; i++) {
+    const line = lines[i]
+    
+    // Count braces to handle nested structures
+    for (const char of line) {
+      if (char === '{') braceCount++
+      if (char === '}') braceCount--
+    }
+    
+    // Check for 'end' keyword (only if not inside braces and on its own line)
+    const endMatch = line.match(/^\s*end\s*$/i)
+    if (endMatch && braceCount === 0) {
+      ruleEndLine = i
+      break
+    }
+  }
+  
+  // Check if current position is between rule start and end
+  if (ruleStartLine >= 0 && ruleEndLine >= 0 && 
+      currentLineNum >= ruleStartLine && currentLineNum <= ruleEndLine) {
+    // Extract full rule text
+    const fullRule = lines.slice(ruleStartLine, ruleEndLine + 1).join('\n')
+    
+    // Find start and end columns
+    const startLineContent = lines[ruleStartLine]
+    const endLineContent = lines[ruleEndLine]
+    const startColumn = startLineContent.match(/^\s*/)?.[0].length || 0
+    const endColumn = endLineContent.length
+    
+    return {
+      fullRule,
+      ruleName,
+      startLine: ruleStartLine + 1, // Convert back to 1-based
+      endLine: ruleEndLine + 1,
+      startColumn: startColumn + 1, // Convert to 1-based
+      endColumn: endColumn + 1,
+      isInsideRule: true
+    }
+  }
+  
+  return null
+}
 
 /**
  * Get human-readable name for completion item kind
@@ -168,22 +262,78 @@ export async function initializeLSP(
       sendCompletionRequest(editor)
     })
     
-    // Add context menu action to trigger completion
+    // Add context menu actions for Generate and Modify
     try {
+      // Generate Rule action (when outside a rule)
       editor.addAction({
-        id: 'lsp-trigger-completion',
-        label: 'Generate Rule Snippet',
+        id: 'lsp-generate-rule',
+        label: 'Generate Rule',
         contextMenuGroupId: 'navigation',
         contextMenuOrder: 1.5,
         run: (ed) => {
-          console.log('[LSP Client] 🖱️  Right-click "Generate Rule Snippet" triggered!')
-          // Cast to IStandaloneCodeEditor since we know it's a standalone editor
-          sendCompletionRequest(ed as monaco.editor.IStandaloneCodeEditor)
+          console.log('[LSP Client] 🖱️  Right-click "Generate Rule" triggered!')
+          const model = ed.getModel()
+          const position = ed.getPosition()
+          
+          if (!model || !position) {
+            console.warn('[LSP Client]   ⚠️  Model or position not available')
+            return
+          }
+          
+          // Check if inside a rule
+          const ruleContext = detectRuleAtPosition(model, position)
+          if (ruleContext) {
+            console.log('[LSP Client]   ⚠️  Inside a rule - should use Modify instead')
+            return
+          }
+          
+          // Use callback to show generate dialog
+          if (onShowGenerateDialog) {
+            setTimeout(() => {
+              onShowGenerateDialog!('generate')
+            }, 100)
+          }
         }
       })
-      console.log('[LSP Client] ✅ Context menu action "Generate Rule Snippet" registered')
+      
+      // Modify Rule action (when inside a rule)
+      editor.addAction({
+        id: 'lsp-modify-rule',
+        label: 'Modify Rule',
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 1.6,
+        run: (ed) => {
+          console.log('[LSP Client] 🖱️  Right-click "Modify Rule" triggered!')
+          const model = ed.getModel()
+          const position = ed.getPosition()
+          
+          if (!model || !position) {
+            console.warn('[LSP Client]   ⚠️  Model or position not available')
+            return
+          }
+          
+          // Detect rule at position
+          const ruleContext = detectRuleAtPosition(model, position)
+          if (!ruleContext) {
+            console.log('[LSP Client]   ⚠️  Not inside a rule - should use Generate instead')
+            return
+          }
+          
+          console.log('[LSP Client]   ✅ Found rule:', ruleContext.ruleName)
+          console.log('[LSP Client]   - Rule lines:', ruleContext.startLine, 'to', ruleContext.endLine)
+          
+          // Use callback to show modify dialog with existing rule and context
+          if (onShowGenerateDialog) {
+            setTimeout(() => {
+              onShowGenerateDialog!('modify', ruleContext.fullRule, ruleContext)
+            }, 100)
+          }
+        }
+      })
+      
+      console.log('[LSP Client] ✅ Context menu actions "Generate Rule" and "Modify Rule" registered')
     } catch (error) {
-      console.error('[LSP Client] ❌ Failed to register context menu action:', error)
+      console.error('[LSP Client] ❌ Failed to register context menu actions:', error)
     }
     
     isConnected = true
@@ -249,8 +399,10 @@ export function sendDocumentContent(content: string): void {
 
 /**
  * Manually send completion request to LSP server
+ * @param editor - Editor instance
+ * @param userPrompt - Optional user prompt for rule generation
  */
-function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor): void {
+function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
   console.log('[LSP Client] ========================================')
   console.log('[LSP Client] 🔘 STEP 1: INITIATING COMPLETION REQUEST')
   console.log('[LSP Client] ----------------------------------------')
@@ -375,8 +527,19 @@ function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor): voi
       position: {
         line: position.lineNumber - 1, // LSP uses 0-based
         character: position.column - 1
-      }
+      },
+      // Explicitly set mode to 'generate' for create requests
+      mode: 'generate',
+      // Include user prompt if provided (for future AI generation)
+      userPrompt: userPrompt || undefined
     }
+  }
+  
+  if (userPrompt) {
+    console.log('[LSP Client]   - Mode: generate (create new rule)')
+    console.log('[LSP Client]   - User prompt:', userPrompt)
+  } else {
+    console.log('[LSP Client]   - Mode: generate (create new rule, no prompt)')
   }
 
   console.log('[LSP Client]   📤 Sending request to server:')
@@ -399,13 +562,19 @@ function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor): voi
 /**
  * Trigger completion manually
  * If editor is not provided, tries to use the global reference
+ * @param editor - Optional editor instance
+ * @param userPrompt - Optional user prompt/input for rule generation
  */
-export function triggerCompletion(editor?: monaco.editor.IStandaloneCodeEditor): void {
+export function triggerCompletion(editor?: monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
   const editorToUse = editor || globalEditorRef
   
   if (editorToUse) {
-    console.log('[LSP Client] 🔘 Manually triggering completion via button')
-    sendCompletionRequest(editorToUse)
+    if (userPrompt) {
+      console.log('[LSP Client] 🔘 Manually triggering completion with user prompt:', userPrompt)
+    } else {
+      console.log('[LSP Client] 🔘 Manually triggering completion via button')
+    }
+    sendCompletionRequest(editorToUse, userPrompt)
   } else {
     console.warn('[LSP Client] ⚠️  Editor not available to trigger completion')
     console.warn('[LSP Client]   - Try refreshing the page or wait for LSP initialization')
@@ -420,6 +589,181 @@ let onSuggestionsReady: ((suggestions: monaco.languages.CompletionItem[]) => voi
  */
 export function setOnSuggestionsReady(callback: (suggestions: monaco.languages.CompletionItem[]) => void): void {
   onSuggestionsReady = callback
+}
+
+/**
+ * Register callback for showing the generate/modify dialog (for right-click context menu)
+ */
+export function setOnShowGenerateDialog(callback: (mode: 'generate' | 'modify', existingRule?: string, ruleContext?: RuleContext) => void): void {
+  onShowGenerateDialog = callback
+  console.log('[LSP Client] ✅ Registered onShowGenerateDialog callback')
+}
+
+/**
+ * Replace a rule in the editor with new rule text
+ */
+export function replaceRuleInEditor(
+  editor: monaco.editor.IStandaloneCodeEditor,
+  ruleContext: RuleContext,
+  newRuleText: string
+): void {
+  const model = editor.getModel()
+  if (!model) {
+    console.error('[LSP Client] ❌ Cannot replace rule: model not available')
+    return
+  }
+  
+  console.log('[LSP Client] 🔄 Replacing rule in editor:')
+  console.log('[LSP Client]   - Rule name:', ruleContext.ruleName)
+  console.log('[LSP Client]   - Lines:', ruleContext.startLine, 'to', ruleContext.endLine)
+  console.log('[LSP Client]   - New rule length:', newRuleText.length, 'chars')
+  
+  const range = new monaco.Range(
+    ruleContext.startLine,
+    1, // Start from beginning of start line
+    ruleContext.endLine,
+    ruleContext.endColumn // End at end column of end line
+  )
+  
+  editor.executeEdits('lsp-modify-rule', [{
+    range,
+    text: newRuleText
+  }])
+  
+  console.log('[LSP Client] ✅ Rule replaced successfully')
+}
+
+/**
+ * Trigger modify rule request to LSP server
+ */
+export function triggerModifyRule(
+  editor: monaco.editor.IStandaloneCodeEditor,
+  modifyPrompt: string,
+  ruleContext: {startLine: number, endLine: number, startColumn: number, endColumn: number},
+  existingRule: string
+): void {
+  console.log('[LSP Client] ========================================')
+  console.log('[LSP Client] 🔄 STEP 1: INITIATING MODIFY REQUEST')
+  console.log('[LSP Client] ----------------------------------------')
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.error('[LSP Client] ❌ WebSocket not ready!')
+    return
+  }
+  
+  const model = editor.getModel()
+  if (!model) {
+    console.error('[LSP Client] ❌ Model not available')
+    return
+  }
+  
+  const requestId = Date.now()
+  console.log('[LSP Client] 📋 Modify Request Details:')
+  console.log('[LSP Client]   - Request ID:', requestId)
+  console.log('[LSP Client]   - Modify prompt:', modifyPrompt)
+  console.log('[LSP Client]   - Rule lines:', ruleContext.startLine, 'to', ruleContext.endLine)
+  console.log('[LSP Client]   - Existing rule length:', existingRule.length, 'chars')
+  
+  // Set up response handler
+  const handler = (event: MessageEvent) => {
+    try {
+      const message = JSON.parse(event.data)
+      
+      if (message.id === requestId && message.result) {
+        ws!.removeEventListener('message', handler)
+        console.log('[LSP Client] ========================================')
+        console.log('[LSP Client] ✅ STEP 2: RECEIVED MODIFY RESPONSE')
+        console.log('[LSP Client] ----------------------------------------')
+        
+        const items = message.result?.items || []
+        if (items.length > 0) {
+          console.log('[LSP Client]   - Modified rule suggestions received:', items.length)
+          
+          // Convert to Monaco suggestions
+          const suggestions = items.map((item: any) => ({
+            label: item.label,
+            kind: item.kind || monaco.languages.CompletionItemKind.Snippet,
+            detail: item.detail,
+            insertText: item.insertText || item.label,
+            insertTextRules: item.insertTextRules || undefined,
+            documentation: item.documentation,
+            range: {
+              startLineNumber: ruleContext.startLine,
+              startColumn: 1,
+              endLineNumber: ruleContext.endLine,
+              endColumn: ruleContext.endColumn
+            }
+          }))
+          
+          // Store suggestions and rule context for replacement
+          pendingSuggestions = suggestions
+          pendingModifyRuleContext = {
+            ruleContext: {
+              fullRule: existingRule,
+              ruleName: '',
+              startLine: ruleContext.startLine,
+              endLine: ruleContext.endLine,
+              startColumn: ruleContext.startColumn,
+              endColumn: ruleContext.endColumn,
+              isInsideRule: true
+            },
+            existingRule: existingRule
+          }
+          
+          console.log('[LSP Client]   - Storing suggestions for display')
+          
+          // Notify UI component to show suggestions dropdown
+          if (onSuggestionsReady) {
+            console.log('[LSP Client]   - Notifying UI component to show suggestions dropdown')
+            onSuggestionsReady(suggestions)
+          } else {
+            console.log('[LSP Client]   ⚠️  No callback registered - suggestions stored but not displayed')
+          }
+          
+          console.log('[LSP Client] ========================================')
+        } else {
+          console.log('[LSP Client] ⚠️  No modified rule in response')
+          console.log('[LSP Client] ========================================')
+        }
+      }
+    } catch (e) {
+      console.error('[LSP Client] Parse error:', e)
+      ws!.removeEventListener('message', handler)
+    }
+  }
+  
+  ws!.addEventListener('message', handler)
+  
+  // Send modify request
+  const message = {
+    jsonrpc: '2.0',
+    id: requestId,
+    method: 'textDocument/completion',
+    params: {
+      textDocument: {
+        uri: model.uri.toString()
+      },
+      position: {
+        line: ruleContext.startLine - 1, // LSP uses 0-based
+        character: 0
+      },
+      userPrompt: modifyPrompt,
+      mode: 'modify',
+      existingRule: existingRule,
+      ruleContext: ruleContext
+    }
+  }
+  
+  console.log('[LSP Client]   📤 Sending modify request to server')
+  console.log('[LSP Client]   - Mode: modify (update existing rule)')
+  ws!.send(JSON.stringify(message))
+  console.log('[LSP Client] ✅ Request sent successfully')
+  console.log('[LSP Client] ========================================')
+  
+  // Timeout cleanup
+  setTimeout(() => {
+    ws!.removeEventListener('message', handler)
+  }, 5000)
 }
 
 /**
