@@ -7,6 +7,86 @@ const sessions = new Map()
 let wss = null
 
 /**
+ * Rule Template Configuration
+ * This structure makes it easy to modify, reuse, and extend rule suggestions
+ */
+const ruleTemplates = [
+  {
+    // Rule metadata (header, description, documentation)
+    label: 'Flag high premium greater than 500',
+    detail: 'DRL Rule Template',
+    documentation: 'A rule that flags quotes with premium greater than 500 for review',
+    
+    // Rule content
+    ruleContent: `rule "Flag high premium greater than 500"
+
+when
+
+    $quote : Quote(premium > 500)
+
+then
+
+    $quote.setRequiresReview(true);
+
+    System.out.println("Quote requires case review");
+
+end`,
+    
+    // Completion item settings
+    kind: 14, // Snippet
+    insertTextRules: 4, // Snippet mode
+  }
+]
+
+/**
+ * Build completion items from rule templates
+ * This function can be extended to support dynamic rule generation
+ */
+function buildCompletionsFromTemplates(templates = ruleTemplates) {
+  return templates.map(template => ({
+    label: template.label,
+    kind: template.kind || 14, // Default to Snippet
+    detail: template.detail || 'DRL Rule Template',
+    insertText: template.ruleContent,
+    insertTextRules: template.insertTextRules || 4,
+    documentation: {
+      value: template.documentation || ''
+    }
+  }))
+}
+
+/**
+ * Helper functions for template management
+ * These make it easy to modify, add, or select templates in the future
+ */
+
+/**
+ * Get a template by label
+ */
+function getTemplateByLabel(label) {
+  return ruleTemplates.find(t => t.label === label)
+}
+
+/**
+ * Add or update a template
+ */
+function upsertTemplate(template) {
+  const index = ruleTemplates.findIndex(t => t.label === template.label)
+  if (index >= 0) {
+    ruleTemplates[index] = { ...ruleTemplates[index], ...template }
+  } else {
+    ruleTemplates.push(template)
+  }
+}
+
+/**
+ * Get templates filtered by criteria (for future use)
+ */
+function getTemplatesByFilter(filterFn) {
+  return ruleTemplates.filter(filterFn)
+}
+
+/**
  * Initialize a session with fact object, BDD tests, and schema
  */
 function initializeSession(ws, params) {
@@ -308,53 +388,95 @@ export function startLSPServer(port = 4001) {
           return
         }
         
-        // Handle completion requests
+        // Handle completion requests (Ctrl+Space / Button / Right-click)
         if (message.method === 'textDocument/completion') {
           const position = message.params.position
           const line = position.line + 1 // Convert to 1-based for display
           const char = position.character + 1
           
-          console.log(`[LSP] 🔍 Completion request received:`)
-          console.log(`[LSP]   - Position: Line ${line}, Column ${char}`)
+          console.log(`[LSP] ========================================`)
+          console.log(`[LSP] 🔍 COMPLETION REQUEST RECEIVED`)
+          console.log(`[LSP] ----------------------------------------`)
+          console.log(`[LSP] Request ID: ${message.id}`)
+          console.log(`[LSP] Position: Line ${line}, Column ${char} (0-based: ${position.line}, ${position.character})`)
           
-          if (!session.initialized) {
-            console.log(`[LSP]   ⚠️  Session not initialized, returning empty completions`)
-            ws.send(JSON.stringify({
-              jsonrpc: '2.0',
-              id: message.id,
-              result: { items: [] }
-            }))
-            return
-          }
-          
-          // Get context around cursor
-          const lines = session.documentContent.split('\n')
+          // Get context around cursor (if session has document content)
+          const documentContent = session.documentContent || ''
+          const lines = documentContent.split('\n')
           const currentLine = lines[position.line] || ''
           const beforeCursor = currentLine.substring(0, position.character)
           const afterCursor = currentLine.substring(position.character)
           
-          console.log(`[LSP]   - Context: "${beforeCursor}|${afterCursor}"`)
+          console.log(`[LSP] Context around cursor:`)
+          console.log(`[LSP]   Before: "${beforeCursor}"`)
+          console.log(`[LSP]   After:  "${afterCursor}"`)
+          console.log(`[LSP]   Full line: "${currentLine}"`)
           
-          const completions = getCompletions(
-            session,
-            session.documentContent,
-            position
-          )
+          // Build completions from reusable rule templates
+          // 
+          // FUTURE USAGE EXAMPLES:
+          // 
+          // 1. Get specific template by label:
+          //    const template = getTemplateByLabel('Flag high premium greater than 500')
+          //    const completions = buildCompletionsFromTemplates([template])
+          //
+          // 2. Modify a template dynamically:
+          //    const template = getTemplateByLabel('Flag high premium greater than 500')
+          //    template.ruleContent = modifiedRuleContent
+          //    template.documentation = 'Updated description'
+          //    upsertTemplate(template)
+          //    const completions = buildCompletionsFromTemplates()
+          //
+          // 3. Filter templates based on context:
+          //    const relevantTemplates = getTemplatesByFilter(t => 
+          //      t.ruleContent.includes(session.factObject.type)
+          //    )
+          //    const completions = buildCompletionsFromTemplates(relevantTemplates)
+          //
+          // 4. Add new template programmatically:
+          //    upsertTemplate({
+          //      label: 'New Rule Name',
+          //      detail: 'New Rule Description',
+          //      documentation: 'New rule documentation',
+          //      ruleContent: 'rule "New Rule"\nwhen\n...\nthen\n...\nend',
+          //      kind: 14,
+          //      insertTextRules: 4
+          //    })
+          //    const completions = buildCompletionsFromTemplates()
+          //
+          const completions = buildCompletionsFromTemplates()
           
-          console.log(`[LSP]   - Generated ${completions.length} completion(s):`)
-          completions.slice(0, 10).forEach((comp, idx) => {
-            console.log(`[LSP]     ${idx + 1}. ${comp.label}${comp.detail ? ` (${comp.detail})` : ''}`)
+          console.log(`[LSP] ----------------------------------------`)
+          console.log(`[LSP] 📋 COMPLETION SUGGESTIONS TO SEND:`)
+          console.log(`[LSP]   Total items: ${completions.length}`)
+          completions.forEach((item, index) => {
+            console.log(`[LSP]   Item ${index + 1}:`)
+            console.log(`[LSP]     - Label: "${item.label}"`)
+            console.log(`[LSP]     - Kind: ${item.kind} (Snippet)`)
+            console.log(`[LSP]     - Detail: "${item.detail}"`)
+            console.log(`[LSP]     - Insert Text Rules: ${item.insertTextRules} (Snippet mode)`)
+            console.log(`[LSP]     - Insert Text Length: ${item.insertText.length} characters`)
+            console.log(`[LSP]     - Insert Text Preview:`)
+            const preview = item.insertText.split('\n').slice(0, 3).join('\n')
+            console.log(`[LSP]       ${preview}...`)
+            if (item.documentation) {
+              console.log(`[LSP]     - Documentation: "${item.documentation.value}"`)
+            }
           })
-          if (completions.length > 10) {
-            console.log(`[LSP]     ... and ${completions.length - 10} more`)
-          }
           
-          ws.send(JSON.stringify({
+          const response = {
             jsonrpc: '2.0',
             id: message.id,
             result: { items: completions }
-          }))
-          console.log(`[LSP] 📤 Sent: ${completions.length} completion(s)`)
+          }
+          
+          ws.send(JSON.stringify(response))
+          console.log(`[LSP] ----------------------------------------`)
+          console.log(`[LSP] 📤 RESPONSE SENT:`)
+          console.log(`[LSP]   Response ID: ${message.id}`)
+          console.log(`[LSP]   Items count: ${completions.length}`)
+          console.log(`[LSP]   Response size: ${JSON.stringify(response).length} bytes`)
+          console.log(`[LSP] ========================================`)
           return
         }
         
