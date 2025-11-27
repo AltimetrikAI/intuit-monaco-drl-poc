@@ -275,113 +275,139 @@ function extractCurrentWord(text) {
 }
 
 /**
- * Generate completions based on context
+ * Handler for CREATE mode (generate new rule)
+ * Returns mock completions - ready for LLM integration
  */
-function getCompletions(session, documentContent, position) {
-  const context = parseContext(documentContent, position)
+function handleCreateRequest(session, userPrompt, position, documentContent) {
+  console.log(`[LSP] 📝 CREATE HANDLER:`)
+  if (userPrompt) {
+    console.log(`[LSP]   - Generate prompt: "${userPrompt}"`)
+    console.log(`[LSP]   (Note: Currently using mock response, ready for LLM integration)`)
+  }
+  
+  // TODO: Replace with LLM call
+  // const completions = await callLLMForRuleGeneration(userPrompt, session)
+  
+  // Mock response - build from templates
+  const completions = buildCompletionsFromTemplates()
+  
+  return completions
+}
+
+/**
+ * Handler for MODIFY mode (update existing rule)
+ * Returns mock modified rule - ready for LLM integration
+ */
+function handleModifyRequest(session, userPrompt, existingRule, position, documentContent) {
+  console.log(`[LSP] 📝 MODIFY HANDLER:`)
+  console.log(`[LSP]   - Modify prompt: "${userPrompt}"`)
+  console.log(`[LSP]   - Existing rule length: ${existingRule ? existingRule.length : 0} chars`)
+  if (existingRule) {
+    console.log(`[LSP]   - Existing rule preview: ${existingRule.substring(0, 100)}...`)
+  }
+  
+  // TODO: Replace with LLM call
+  // const completions = await callLLMForRuleModification(userPrompt, existingRule, session)
+  
+  // Mock response - use buildMockModifiedRule
+  const { ruleText: mockModifiedRule } = buildMockModifiedRule(existingRule, userPrompt)
+  
+  const completions = [{
+    label: 'Modified Rule',
+    kind: 14, // Snippet
+    detail: 'Modified DRL Rule',
+    insertText: mockModifiedRule,
+    insertTextRules: 4, // Snippet mode
+    documentation: {
+      value: `Modified rule based on: ${userPrompt || 'user request'}`
+    }
+  }]
+  
+  return completions
+}
+
+/**
+ * Handler for COMPLETION mode (inline auto-completion)
+ * Always returns completions regardless of what user types - ready for LLM integration
+ */
+function handleCompletionRequest(session, position, documentContent) {
+  console.log(`[LSP] 💡 COMPLETION HANDLER:`)
+  console.log(`[LSP]   - Always providing completions (no conditional checks)`)
+  
+  const lines = documentContent.split('\n')
+  const currentLine = lines[position.line] || ''
+  const beforeCursor = currentLine.substring(0, position.character)
+  const afterCursor = currentLine.substring(position.character)
+  
+  console.log(`[LSP]   - Before cursor: "${beforeCursor}"`)
+  console.log(`[LSP]   - After cursor: "${afterCursor}"`)
+  console.log(`[LSP]   - Full line: "${currentLine}"`)
+  
+  // TODO: Replace with LLM call
+  // const completions = await callLLMForInlineCompletion(beforeCursor, afterCursor, documentContent, session)
+  
+  // Mock response - always provide suggestions
   const completions = []
   const factFields = getFactFields(session)
   
-  // Log detected context
-  const contextFlags = []
-  if (context.afterQuoteConstructor) contextFlags.push('afterQuoteConstructor')
-  if (context.afterVariableDot) contextFlags.push('afterVariableDot')
-  if (context.inWhenClause) contextFlags.push('inWhenClause')
-  if (context.inThenClause) contextFlags.push('inThenClause')
-  if (context.currentWord) contextFlags.push(`currentWord="${context.currentWord}"`)
+  // Always provide rule template suggestion
+  completions.push({
+    label: 'rule "Rule Name"',
+    kind: 14, // Snippet
+    detail: 'DRL rule template',
+    insertText: 'rule "$1"\nwhen\n    $2\nthen\n    $3\nend',
+    insertTextRules: 4
+  })
   
-  if (contextFlags.length > 0) {
-    console.log(`[LSP]   - Detected context: ${contextFlags.join(', ')}`)
-  }
-  
-  // After Quote( - suggest fields
-  if (context.afterQuoteConstructor) {
-    factFields.forEach(field => {
-      const prefix = context.currentWord.toLowerCase()
-      if (field.name.toLowerCase().startsWith(prefix)) {
-        // Type-aware suggestions
-        if (field.type === 'boolean') {
-          completions.push({
-            label: `${field.name} == true`,
-            kind: 5, // Field
-            detail: `boolean field`,
-            insertText: `${field.name} == true`
-          })
-          completions.push({
-            label: `${field.name} == false`,
-            kind: 5,
-            detail: `boolean field`,
-            insertText: `${field.name} == false`
-          })
-        } else if (field.type === 'number') {
-          completions.push({
-            label: `${field.name} > 0`,
-            kind: 5,
-            detail: `number field`,
-            insertText: `${field.name} > 0`
-          })
-          completions.push({
-            label: `${field.name} == 0`,
-            kind: 5,
-            detail: `number field`,
-            insertText: `${field.name} == 0`
-          })
-        }
-      }
-    })
-  }
-  
-  // After $quote. - suggest methods
-  if (context.afterVariableDot) {
-    factFields.forEach(field => {
-      const prefix = context.currentWord.toLowerCase()
-      const methods = getFactMethods(field.name, field.type)
-      methods.forEach(method => {
-        if (method.label.toLowerCase().includes(prefix)) {
-          completions.push(method)
-        }
-      })
-    })
-  }
-  
-  // DRL keywords
-  const drlKeywords = [
-    { label: 'rule', kind: 14, detail: 'DRL keyword', insertText: 'rule "$1"\nwhen\n    $2\nthen\n    $3\nend' },
+  // Always provide common DRL keywords
+  completions.push(
     { label: 'when', kind: 14, detail: 'DRL keyword', insertText: 'when' },
     { label: 'then', kind: 14, detail: 'DRL keyword', insertText: 'then' },
     { label: 'end', kind: 14, detail: 'DRL keyword', insertText: 'end' },
     { label: 'package', kind: 14, detail: 'DRL keyword', insertText: 'package ' },
     { label: 'import', kind: 14, detail: 'DRL keyword', insertText: 'import ' }
-  ]
+  )
   
-  drlKeywords.forEach(keyword => {
-    if (keyword.label.startsWith(context.currentWord)) {
-      completions.push(keyword)
+  // Always provide Quote fact suggestions
+  completions.push({
+    label: 'Quote',
+    kind: 7, // Class
+    detail: 'Quote fact object',
+    insertText: 'Quote'
+  })
+  completions.push({
+    label: '$quote',
+    kind: 6, // Variable
+    detail: 'Quote variable',
+    insertText: '$quote'
+  })
+  
+  // Always provide field suggestions
+  factFields.forEach(field => {
+    if (field.type === 'number') {
+      completions.push({
+        label: `${field.name} > 0`,
+        kind: 5, // Field
+        detail: `${field.type} field`,
+        insertText: `${field.name} > 0`
+      })
+    } else if (field.type === 'boolean') {
+      completions.push({
+        label: `${field.name} == true`,
+        kind: 5,
+        detail: `${field.type} field`,
+        insertText: `${field.name} == true`
+      })
     }
   })
   
-  // BDD-informed suggestions (parse BDD for patterns)
-  if (session.bddTests) {
-    const bddLines = session.bddTests.split('\n')
-    bddLines.forEach(line => {
-      if (line.includes('loyal') && context.currentWord.toLowerCase().includes('loyal')) {
-        completions.push({
-          label: 'loyalCustomer == true',
-          kind: 5,
-          detail: 'From BDD: loyalty discount scenario',
-          insertText: 'loyalCustomer == true'
-        })
-      }
-      if (line.includes('premium') && context.currentWord.toLowerCase().includes('premium')) {
-        completions.push({
-          label: 'premium > 1000',
-          kind: 5,
-          detail: 'From BDD: high premium scenario',
-          insertText: 'premium > 1000'
-        })
-      }
+  // Always provide method suggestions
+  factFields.forEach(field => {
+    const methods = getFactMethods(field.name, field.type)
+    methods.forEach(method => {
+      completions.push(method)
     })
-  }
+  })
   
   return completions
 }
@@ -493,265 +519,59 @@ export function startLSPServer(port = 4001) {
             console.log(`[LSP]   Full line: "${currentLine}"`)
           }
           
-          // Handle INLINE mode (auto-completion during typing)
+          // Route to appropriate handler based on mode
+          let completions = []
+          
           if (isInlineMode) {
+            // COMPLETION mode - always provide suggestions
             console.log(`[LSP] ========================================`)
             console.log(`[LSP] 📥 RECEIVED INLINE COMPLETION REQUEST`)
             console.log(`[LSP] ----------------------------------------`)
             console.log(`[LSP]   - Request ID: ${message.id}`)
             console.log(`[LSP]   - Request Mode: ${requestMode}`)
             console.log(`[LSP]   - Position: Line ${line}, Column ${char}`)
-            console.log(`[LSP]   - Before cursor: "${beforeCursor}"`)
-            console.log(`[LSP]   - After cursor: "${afterCursor}"`)
-            console.log(`[LSP]   - Full line: "${currentLine}"`)
             console.log(`[LSP]   - Document length: ${documentContent.length} chars`)
             console.log(`[LSP]   - Session initialized: ${session.initialized}`)
             console.log(`[LSP] ----------------------------------------`)
-            console.log(`[LSP] 💡 GENERATING INLINE COMPLETIONS:`)
             
-            // Mock inline completion suggestions based on context
-            const completions = []
+            completions = handleCompletionRequest(session, position, documentContent)
             
-            // Check if user is typing after "Quote("
-            if (beforeCursor.includes('Quote(') && !beforeCursor.includes(')')) {
-              // Suggest field completions
-              const factFields = getFactFields(session)
-              factFields.forEach(field => {
-                if (field.type === 'number') {
-                  completions.push({
-                    label: `${field.name} > 0`,
-                    kind: 5, // Field
-                    detail: `${field.type} field`,
-                    insertText: `${field.name} > 0`
-                  })
-                } else if (field.type === 'boolean') {
-                  completions.push({
-                    label: `${field.name} == true`,
-                    kind: 5,
-                    detail: `${field.type} field`,
-                    insertText: `${field.name} == true`
-                  })
-                }
-              })
-            }
-            
-            // Check if user is typing after "$quote."
-            if (beforeCursor.includes('$quote.') || beforeCursor.includes('$Quote.')) {
-              const factFields = getFactFields(session)
-              factFields.forEach(field => {
-                const methods = getFactMethods(field.name, field.type)
-                methods.forEach(method => {
-                  completions.push(method)
-                })
-              })
-            }
-            
-            // Check if user is typing "rule"
-            if (beforeCursor.trim().toLowerCase().startsWith('rule') && beforeCursor.length < 20) {
-              completions.push({
-                label: 'rule "Rule Name"',
-                kind: 14, // Snippet
-                detail: 'DRL rule template',
-                insertText: 'rule "$1"\nwhen\n    $2\nthen\n    $3\nend',
-                insertTextRules: 4
-              })
-            }
-            
-            // Check if user is typing "when" or "then"
-            if (beforeCursor.trim().toLowerCase() === 'when') {
-              completions.push({
-                label: 'when clause',
-                kind: 14,
-                detail: 'DRL when clause',
-                insertText: 'when\n    $quote : Quote($1)\n'
-              })
-            }
-            
-            if (beforeCursor.trim().toLowerCase() === 'then') {
-              completions.push({
-                label: 'then clause',
-                kind: 14,
-                detail: 'DRL then clause',
-                insertText: 'then\n    $quote.setRequiresReview(true);\n    System.out.println("$1");\n'
-              })
-            }
-            
-            // If no context-specific completions, provide some general ones
-            if (completions.length === 0) {
-              // Always provide at least one mock suggestion for testing
-              const currentWord = beforeCursor.trim().toLowerCase()
-              
-              // If user typed "rule", provide rule template
-              if (currentWord === 'rule' || currentWord.startsWith('rule')) {
-                completions.push({
-                  label: 'rule "Rule Name"',
-                  kind: 14, // Snippet
-                  detail: 'DRL rule template',
-                  insertText: 'rule "Rule Name"\nwhen\n    $quote : Quote(premium > 0)\nthen\n    $quote.setRequiresReview(true);\n    System.out.println("Rule executed");\nend'
-                })
-              } else {
-                // Default suggestions
-                completions.push({
-                  label: 'Quote',
-                  kind: 7, // Class
-                  detail: 'Quote fact object',
-                  insertText: 'Quote'
-                })
-                completions.push({
-                  label: '$quote',
-                  kind: 6, // Variable
-                  detail: 'Quote variable',
-                  insertText: '$quote'
-                })
-              }
-            }
-            
-            console.log(`[LSP] ----------------------------------------`)
-            console.log(`[LSP] 📤 SENDING RESPONSE TO CLIENT`)
-            console.log(`[LSP] ----------------------------------------`)
-            console.log(`[LSP]   - Total completions: ${completions.length}`)
-            completions.forEach((item, index) => {
-              console.log(`[LSP]     Item ${index + 1}:`)
-              console.log(`[LSP]       - Label: "${item.label}"`)
-              console.log(`[LSP]       - Kind: ${item.kind || 'N/A'}`)
-              console.log(`[LSP]       - Detail: "${item.detail || 'N/A'}"`)
-              console.log(`[LSP]       - Insert Text Length: ${(item.insertText || '').length} chars`)
-              console.log(`[LSP]       - Insert Text Preview: "${(item.insertText || '').substring(0, 150)}${(item.insertText || '').length > 150 ? '...' : ''}"`)
-              if (item.insertTextRules) {
-                console.log(`[LSP]       - Insert Text Rules: ${item.insertTextRules}`)
-              }
-            })
-            
-            const response = {
-              jsonrpc: '2.0',
-              id: message.id,
-              result: { items: completions }
-            }
-            
-            const responseJson = JSON.stringify(response)
-            console.log(`[LSP]   - Response JSON length: ${responseJson.length} bytes`)
-            console.log(`[LSP]   - Response preview:`, responseJson.substring(0, 300) + (responseJson.length > 300 ? '...' : ''))
-            
-            ws.send(responseJson)
-            console.log(`[LSP] ✅ INLINE COMPLETION RESPONSE SENT TO CLIENT`)
-            console.log(`[LSP]   - Response ID: ${message.id}`)
-            console.log(`[LSP]   - Items in response: ${completions.length}`)
+          } else if (isModifyMode) {
+            // MODIFY mode
             console.log(`[LSP] ========================================`)
-            return
+            console.log(`[LSP] 📥 RECEIVED MODIFY REQUEST`)
+            console.log(`[LSP] ----------------------------------------`)
+            console.log(`[LSP]   - Request ID: ${message.id}`)
+            console.log(`[LSP]   - Position: Line ${line}, Column ${char}`)
+            
+            completions = handleModifyRequest(session, userPrompt, existingRule, position, documentContent)
+            
+          } else {
+            // GENERATE mode (default)
+            console.log(`[LSP] ========================================`)
+            console.log(`[LSP] 📥 RECEIVED CREATE REQUEST`)
+            console.log(`[LSP] ----------------------------------------`)
+            console.log(`[LSP]   - Request ID: ${message.id}`)
+            console.log(`[LSP]   - Position: Line ${line}, Column ${char}`)
+            
+            completions = handleCreateRequest(session, userPrompt, position, documentContent)
           }
           
-          if (isModifyMode) {
-            console.log(`[LSP] ----------------------------------------`)
-            console.log(`[LSP] 📝 MODIFY DETAILS:`)
-            console.log(`[LSP]   - Modify prompt: "${userPrompt}"`)
-            console.log(`[LSP]   - Existing rule length: ${existingRule ? existingRule.length : 0} chars`)
-            if (existingRule) {
-              console.log(`[LSP]   - Existing rule preview: ${existingRule.substring(0, 100)}...`)
-            }
-            
-            // Use buildMockModifiedRule to generate properly formatted modified rule
-            const { ruleText: mockModifiedRule } = buildMockModifiedRule(existingRule, userPrompt)
-            
-            console.log(`[LSP]   - Mock modified rule length: ${mockModifiedRule.length} chars`)
-            console.log(`[LSP]   - Mock modified rule preview:`)
-            console.log(`[LSP]     ${mockModifiedRule.split('\n').slice(0, 3).join('\n     ')}...`)
-            
-            const completions = [{
-              label: 'Modified Rule',
-              kind: 14, // Snippet
-              detail: 'Modified DRL Rule',
-              insertText: mockModifiedRule,
-              insertTextRules: 4, // Snippet mode
-              documentation: {
-                value: `Modified rule based on: ${userPrompt || 'user request'}`
-              }
-            }]
-            
-            console.log(`[LSP]   - Returning modified rule (${mockModifiedRule.length} chars)`)
-            console.log(`[LSP] ----------------------------------------`)
-            console.log(`[LSP] 📋 MODIFIED RULE SUGGESTIONS TO SEND:`)
-            console.log(`[LSP]   Total items: ${completions.length}`)
-            completions.forEach((item, index) => {
-              console.log(`[LSP]   Item ${index + 1}:`)
-              console.log(`[LSP]     - Label: "${item.label}"`)
-              console.log(`[LSP]     - Kind: ${item.kind} (Snippet)`)
-              console.log(`[LSP]     - Detail: "${item.detail}"`)
-              console.log(`[LSP]     - Insert Text Length: ${item.insertText.length} characters`)
-            })
-            
-            const response = {
-              jsonrpc: '2.0',
-              id: message.id,
-              result: { items: completions }
-            }
-            
-            ws.send(JSON.stringify(response))
-            console.log(`[LSP] 📤 MODIFY RESPONSE SENT:`)
-            console.log(`[LSP]   Response ID: ${message.id}`)
-            console.log(`[LSP]   Items count: ${completions.length}`)
-            console.log(`[LSP] ========================================`)
-            return
-          }
-          
-          // Handle GENERATE mode (create new rule)
-          if (isGenerateMode) {
-            console.log(`[LSP] ----------------------------------------`)
-            // Check for user prompt (for future AI generation)
-            if (userPrompt) {
-              console.log(`[LSP] 📝 CREATE DETAILS:`)
-              console.log(`[LSP]   - Generate prompt: "${userPrompt}"`)
-              console.log(`[LSP]   (Note: Currently using mock response, but prompt is logged for future AI integration)`)
-            }
-            
-            // Build completions from reusable rule templates
-          // 
-          // FUTURE USAGE EXAMPLES:
-          // 
-          // 1. Get specific template by label:
-          //    const template = getTemplateByLabel('Flag high premium greater than 500')
-          //    const completions = buildCompletionsFromTemplates([template])
-          //
-          // 2. Modify a template dynamically:
-          //    const template = getTemplateByLabel('Flag high premium greater than 500')
-          //    template.ruleContent = modifiedRuleContent
-          //    template.documentation = 'Updated description'
-          //    upsertTemplate(template)
-          //    const completions = buildCompletionsFromTemplates()
-          //
-          // 3. Filter templates based on context:
-          //    const relevantTemplates = getTemplatesByFilter(t => 
-          //      t.ruleContent.includes(session.factObject.type)
-          //    )
-          //    const completions = buildCompletionsFromTemplates(relevantTemplates)
-          //
-          // 4. Add new template programmatically:
-          //    upsertTemplate({
-          //      label: 'New Rule Name',
-          //      detail: 'New Rule Description',
-          //      documentation: 'New rule documentation',
-          //      ruleContent: 'rule "New Rule"\nwhen\n...\nthen\n...\nend',
-          //      kind: 14,
-          //      insertTextRules: 4
-          //    })
-          //    const completions = buildCompletionsFromTemplates()
-          //
-          const completions = buildCompletionsFromTemplates()
-          
+          // Send response (common for all modes)
           console.log(`[LSP] ----------------------------------------`)
-          console.log(`[LSP] 📋 COMPLETION SUGGESTIONS TO SEND:`)
-          console.log(`[LSP]   Total items: ${completions.length}`)
+          console.log(`[LSP] 📤 SENDING RESPONSE TO CLIENT`)
+          console.log(`[LSP] ----------------------------------------`)
+          console.log(`[LSP]   - Total completions: ${completions.length}`)
           completions.forEach((item, index) => {
-            console.log(`[LSP]   Item ${index + 1}:`)
-            console.log(`[LSP]     - Label: "${item.label}"`)
-            console.log(`[LSP]     - Kind: ${item.kind} (Snippet)`)
-            console.log(`[LSP]     - Detail: "${item.detail}"`)
-            console.log(`[LSP]     - Insert Text Rules: ${item.insertTextRules} (Snippet mode)`)
-            console.log(`[LSP]     - Insert Text Length: ${item.insertText.length} characters`)
-            console.log(`[LSP]     - Insert Text Preview:`)
-            const preview = item.insertText.split('\n').slice(0, 3).join('\n')
-            console.log(`[LSP]       ${preview}...`)
-            if (item.documentation) {
-              console.log(`[LSP]     - Documentation: "${item.documentation.value}"`)
+            console.log(`[LSP]     Item ${index + 1}:`)
+            console.log(`[LSP]       - Label: "${item.label}"`)
+            console.log(`[LSP]       - Kind: ${item.kind || 'N/A'}`)
+            console.log(`[LSP]       - Detail: "${item.detail || 'N/A'}"`)
+            console.log(`[LSP]       - Insert Text Length: ${(item.insertText || '').length} chars`)
+            const preview = (item.insertText || '').substring(0, 150)
+            console.log(`[LSP]       - Insert Text Preview: "${preview}${(item.insertText || '').length > 150 ? '...' : ''}"`)
+            if (item.insertTextRules) {
+              console.log(`[LSP]       - Insert Text Rules: ${item.insertTextRules}`)
             }
           })
           
@@ -761,15 +581,16 @@ export function startLSPServer(port = 4001) {
             result: { items: completions }
           }
           
-          ws.send(JSON.stringify(response))
-          console.log(`[LSP] ----------------------------------------`)
-          console.log(`[LSP] 📤 CREATE RESPONSE SENT:`)
-          console.log(`[LSP]   Response ID: ${message.id}`)
-          console.log(`[LSP]   Items count: ${completions.length}`)
-          console.log(`[LSP]   Response size: ${JSON.stringify(response).length} bytes`)
+          const responseJson = JSON.stringify(response)
+          console.log(`[LSP]   - Response JSON length: ${responseJson.length} bytes`)
+          console.log(`[LSP]   - Response preview:`, responseJson.substring(0, 300) + (responseJson.length > 300 ? '...' : ''))
+          
+          ws.send(responseJson)
+          console.log(`[LSP] ✅ RESPONSE SENT TO CLIENT`)
+          console.log(`[LSP]   - Response ID: ${message.id}`)
+          console.log(`[LSP]   - Items in response: ${completions.length}`)
           console.log(`[LSP] ========================================`)
           return
-          }
         }
         
         // Log unknown message types

@@ -422,9 +422,24 @@ export function EditorWithDiff({
     triggerModifyRule(editor, modifyPrompt, ruleCtx, existingRuleText)
   }
 
-  // Cleanup LSP on unmount
+  // Cleanup LSP and editor on unmount
   useEffect(() => {
     return () => {
+      // Cleanup editor disposables
+      if (editorRef.current) {
+        try {
+          // Dispose content change listener if it exists
+          const disposable = (editorRef.current as any)?._contentChangeDisposable
+          if (disposable && typeof disposable.dispose === 'function') {
+            disposable.dispose()
+          }
+        } catch (error) {
+          // Ignore errors during cleanup
+          console.warn('[Editor] Error during editor cleanup:', error)
+        }
+        editorRef.current = null
+      }
+      
       if (enableLSP && language === 'java') {
         disconnectLSP()
         lspInitialized.current = false
@@ -433,6 +448,22 @@ export function EditorWithDiff({
       setEditorMounted(false) // Reset editor mounted state
     }
   }, [enableLSP, language])
+  
+  // Cleanup when switching between Editor and DiffEditor
+  // Note: The @monaco-editor/react library handles model disposal automatically
+  // This effect just ensures editorRef is cleared when switching
+  useEffect(() => {
+    // When showDiff changes, clear the editor ref to prevent stale references
+    // The actual cleanup is handled by @monaco-editor/react
+    if (!showDiff && editorRef.current) {
+      // Editor mode - ensure we have the right reference
+      const currentEditor = editorRef.current
+      if (currentEditor && (currentEditor as any).getModifiedEditor) {
+        // This was a diff editor, clear it
+        editorRef.current = null
+      }
+    }
+  }, [showDiff])
 
   async function handleSaveClick() {
     if (hasChanges) {
@@ -473,9 +504,12 @@ export function EditorWithDiff({
     }
     
     // Listen for changes in the modified editor
-    modifiedEditor.onDidChangeModelContent(() => {
+    const disposable = modifiedEditor.onDidChangeModelContent(() => {
       onChange(modifiedEditor.getValue())
     })
+    
+    // Store disposable for cleanup
+    ;(editorRef.current as any)._contentChangeDisposable = disposable
   }
 
   const handleSuggestionSelect = (suggestion: monaco.languages.CompletionItem, event?: React.MouseEvent) => {
@@ -998,6 +1032,7 @@ export function EditorWithDiff({
           <>
             {showDiff ? (
               <DiffEditor
+                key={`diff-${editorIdRef.current}`}
                 height={height}
                 language={language}
                 theme="vs-dark"
@@ -1008,6 +1043,7 @@ export function EditorWithDiff({
               />
             ) : (
               <Editor
+                key={`editor-${editorIdRef.current}`}
                 height={height}
                 defaultLanguage={language}
                 theme="vs-dark"

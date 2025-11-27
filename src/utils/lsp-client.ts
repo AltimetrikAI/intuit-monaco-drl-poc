@@ -314,7 +314,8 @@ export async function initializeLSP(
     console.log('[LSP Client]     2. Manual trigger via keyboard shortcut')
     console.log('[LSP Client]     3. After accepting a completion')
     
-    inlineCompletionsProvider = monaco.languages.registerInlineCompletionsProvider('java', {
+    // Create provider object with all required methods
+    const providerObject: any = {
       provideInlineCompletions: async (
         model: Monaco.editor.ITextModel,
         position: Monaco.Position,
@@ -391,11 +392,20 @@ export async function initializeLSP(
           return { items: [] }
         }
       },
-      freeInlineCompletions: (completions) => {
+      freeInlineCompletions: (completions: Monaco.languages.InlineCompletions<Monaco.languages.InlineCompletion> | undefined) => {
         // Cleanup if necessary
         console.log('[LSP Client] 🧹 Freeing inline completions (cleanup)')
+      },
+      // Add disposeInlineCompletions method that Monaco expects (runtime API, not in TypeScript types)
+      disposeInlineCompletions: (completions: any) => {
+        console.log('[LSP Client] 🗑️  Disposing inline completions')
+        if (completions) {
+          console.log('[LSP Client]   - Completions to dispose:', completions.items?.length || 0)
+        }
       }
-    })
+    }
+    
+    inlineCompletionsProvider = monaco.languages.registerInlineCompletionsProvider('java', providerObject)
     
     console.log('[LSP Client] ✅ Inline completions provider registered successfully')
 
