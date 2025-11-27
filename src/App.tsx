@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { editor } from 'monaco-editor'
 import Editor from '@monaco-editor/react'
 import { fetchRule, runPipeline, saveRule, type PipelineResult } from './api'
 import { StatusPanel } from './components/StatusPanel'
@@ -17,7 +18,7 @@ function App() {
       .finally(() => setLoading(false))
   }, [])
 
-  const monacoOptions = useMemo(
+  const monacoOptions = useMemo<editor.IStandaloneEditorConstructionOptions>(
     () => ({
       fontSize: 14,
       minimap: { enabled: false },
