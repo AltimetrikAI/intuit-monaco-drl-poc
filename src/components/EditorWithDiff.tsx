@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import Editor, { DiffEditor, OnMount, DiffOnMount } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
-import { initializeLSP, sendDocumentContent, disconnectLSP, triggerCompletion, setOnSuggestionsReady, setOnShowGenerateDialog, replaceRuleInEditor, triggerModifyRule } from '../utils/lsp-client'
+import { initializeLSP, sendDocumentContent, disconnectLSP, triggerCompletion, setOnSuggestionsReady, setOnShowGenerateDialog, replaceRuleInEditor, triggerModifyRule, toggleAutoCompletion, isAutoCompletionEnabled, setOnAutoCompletionToggle } from '../utils/lsp-client'
 import { extractFactSchema } from '../utils/factSchema'
 
 /**
@@ -86,6 +86,7 @@ export function EditorWithDiff({
   const [modifyPrompt, setModifyPrompt] = useState('') // Separate prompt for modify mode
   const [ruleContext, setRuleContext] = useState<{startLine: number, endLine: number, startColumn: number, endColumn: number} | null>(null) // Store rule position for replacement
   const [editorMounted, setEditorMounted] = useState(false) // Track when editor is mounted
+  const [autoCompletionEnabled, setAutoCompletionEnabled] = useState(false) // Track auto-completion state
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const lspInitialized = useRef(false)
   const editorIdRef = useRef<string>(`editor-${Date.now()}-${Math.random()}`) // Unique ID for this editor instance
@@ -107,6 +108,11 @@ export function EditorWithDiff({
       suggestOnTriggerCharacters: true,
       acceptSuggestionOnCommitCharacter: true,
       tabCompletion: 'on' as const,
+      // Enable inline suggestions
+      inlineSuggest: {
+        enabled: true,
+        showToolbar: 'always' as const // Always show toolbar for inline suggestions
+      },
       // Enable normal Java suggestions (keywords, words, etc.)
       wordBasedSuggestions: true,
       suggest: {
@@ -116,7 +122,10 @@ export function EditorWithDiff({
         showClasses: true,
         showFunctions: true,
         showVariables: true,
-        showFields: true
+        showFields: true,
+        // Try to trigger inline completions more aggressively
+        preview: true,
+        previewMode: 'prefix' as const
       }
     }),
     []
@@ -176,6 +185,11 @@ export function EditorWithDiff({
       return
     }
     
+    // Skip if already initialized to avoid repeated checks
+    if (lspInitialized.current) {
+      return
+    }
+    
     // Only log if LSP is enabled and language is java (to reduce noise)
     if (enableLSP && language === 'java') {
       console.log('[Editor] LSP initialization check:', {
@@ -189,7 +203,7 @@ export function EditorWithDiff({
       })
     }
     
-    if (!enableLSP || language !== 'java' || !editorRef.current || lspInitialized.current) {
+    if (!enableLSP || language !== 'java' || !editorRef.current) {
       // Only log if LSP is enabled but conditions aren't met (to reduce noise from other editors)
       if (enableLSP && language !== 'java') {
         // Silently skip - this is expected for non-java editors (e.g., markdown in diff view)
@@ -197,9 +211,6 @@ export function EditorWithDiff({
       }
       if (enableLSP && !editorRef.current) {
         console.log('[Editor] Editor ref not available')
-      }
-      if (lspInitialized.current) {
-        console.log('[Editor] LSP already initialized')
       }
       return
     }
@@ -223,7 +234,7 @@ export function EditorWithDiff({
     } else {
       console.log('[Editor] ⚠️  Waiting for factObject and bddTests...')
     }
-  }, [enableLSP, language, factObject, bddTests, value, editorMounted])
+  }, [enableLSP, language, factObject, bddTests, editorMounted]) // Removed 'value' to prevent re-runs on every keystroke
 
   // Send document updates to LSP
   useEffect(() => {
@@ -282,6 +293,15 @@ export function EditorWithDiff({
     setOnShowGenerateDialog(showDialog)
     console.log('[Editor] ✅ Registered show dialog callback with LSP client')
     
+    // Register callback for auto-completion toggle
+    setOnAutoCompletionToggle((enabled: boolean) => {
+      console.log('[Editor] 🔄 Auto-completion toggled:', enabled)
+      setAutoCompletionEnabled(enabled)
+    })
+    
+    // Initialize auto-completion state
+    setAutoCompletionEnabled(isAutoCompletionEnabled())
+    
     // Also listen for custom event as fallback
     const handleShowDialog = (event: Event) => {
       console.log('[Editor] 📢 Received show-generate-dialog event (fallback)')
@@ -295,6 +315,7 @@ export function EditorWithDiff({
     
     return () => {
       setOnShowGenerateDialog(() => {}) // Clear callback
+      setOnAutoCompletionToggle(() => {}) // Clear callback
       window.removeEventListener('show-generate-dialog', handleShowDialog)
       console.log('[Editor] 🛑 Cleaned up show dialog handlers')
     }
@@ -544,13 +565,13 @@ export function EditorWithDiff({
             ruleContext.startLine,
             ruleContext.startColumn || 1,
             ruleContext.endLine,
-            ruleContext.endColumn || 1000
+            ruleContext.endColumn || model.getLineMaxColumn(ruleContext.endLine)
           )
         : new monaco.Range(
             suggestionRange.startLineNumber,
             suggestionRange.startColumn || 1,
             suggestionRange.endLineNumber,
-            suggestionRange.endColumn || 1000
+            suggestionRange.endColumn || model.getLineMaxColumn(suggestionRange.endLineNumber)
           )
       
       console.log(`[Editor ${editorIdRef.current}] 🔄 MODIFY MODE: Replacing rule with modified version`)
@@ -917,33 +938,50 @@ export function EditorWithDiff({
               </button>
             )}
             {enableLSP && language === 'java' && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  // Disabled - using right-click context menu instead
-                  console.log('[Editor] ✨ AI button clicked (disabled - use right-click context menu)')
-                }}
-                disabled={true}
-                style={{ 
-                  padding: '8px 10px', 
-                  fontSize: '18px', 
-                  backgroundColor: lspReady ? '#3b82f6' : '#9ca3af', 
-                  color: 'white', 
-                  border: 'none', 
-                  borderRadius: '4px', 
-                  cursor: lspReady ? 'pointer' : 'not-allowed',
-                  opacity: lspReady ? 1 : 0.6,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  minWidth: '36px',
-                  height: '36px'
-                }}
-                title="AI button disabled - Use right-click context menu (Generate Rule / Modify Rule)"
-              >
-                ✨
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {autoCompletionEnabled && (
+                  <span 
+                    style={{ 
+                      fontSize: '11px', 
+                      color: '#10b981', 
+                      padding: '2px 6px',
+                      backgroundColor: '#064e3b',
+                      borderRadius: '4px',
+                      fontWeight: '500'
+                    }}
+                    title="Auto-completion is enabled"
+                  >
+                    💡 Auto
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    // Disabled - using right-click context menu instead
+                    console.log('[Editor] ✨ AI button clicked (disabled - use right-click context menu)')
+                  }}
+                  disabled={true}
+                  style={{ 
+                    padding: '8px 10px', 
+                    fontSize: '18px', 
+                    backgroundColor: lspReady ? '#3b82f6' : '#9ca3af', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: '4px', 
+                    cursor: lspReady ? 'pointer' : 'not-allowed',
+                    opacity: lspReady ? 1 : 0.6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: '36px',
+                    height: '36px'
+                  }}
+                  title="AI button disabled - Use right-click context menu (Generate Rule / Modify Rule)"
+                >
+                  ✨
+                </button>
+              </div>
             )}
             <button
               onClick={handleSaveClick}
