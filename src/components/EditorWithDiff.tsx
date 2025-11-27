@@ -88,6 +88,7 @@ export function EditorWithDiff({
   const [editorMounted, setEditorMounted] = useState(false) // Track when editor is mounted
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const lspInitialized = useRef(false)
+  const editorIdRef = useRef<string>(`editor-${Date.now()}-${Math.random()}`) // Unique ID for this editor instance
 
   const monacoOptions = useMemo(
     () => ({
@@ -325,10 +326,40 @@ export function EditorWithDiff({
       
       // Send modify request to LSP
       setTimeout(() => {
+        console.log(`[Editor ${editorIdRef.current}] ========================================`)
+        console.log(`[Editor ${editorIdRef.current}] 📤 SENDING MODIFY REQUEST`)
+        console.log(`[Editor ${editorIdRef.current}] ----------------------------------------`)
+        console.log(`[Editor ${editorIdRef.current}]   - Editor ID:`, editorIdRef.current)
+        console.log(`[Editor ${editorIdRef.current}]   - Editor Title:`, title)
+        console.log(`[Editor ${editorIdRef.current}]   - Editor Ref Available:`, !!editorRef.current)
+        if (editorRef.current) {
+          const model = editorRef.current.getModel()
+          console.log(`[Editor ${editorIdRef.current}]   - Editor URI:`, model?.uri.toString())
+        }
+        console.log(`[Editor ${editorIdRef.current}]   - Rule Context Available:`, !!currentContext)
+        console.log(`[Editor ${editorIdRef.current}]   - Existing Rule Available:`, !!existingRule)
+        if (currentContext) {
+          console.log(`[Editor ${editorIdRef.current}]   - Rule Context:`, {
+            startLine: currentContext.startLine,
+            endLine: currentContext.endLine,
+            startColumn: currentContext.startColumn,
+            endColumn: currentContext.endColumn
+          })
+        }
+        if (existingRule) {
+          console.log(`[Editor ${editorIdRef.current}]   - Existing Rule Length:`, existingRule.length, 'chars')
+          console.log(`[Editor ${editorIdRef.current}]   - Existing Rule Preview:`, existingRule.substring(0, 100) + '...')
+        }
+        console.log(`[Editor ${editorIdRef.current}]   - Modify Prompt:`, currentPrompt)
+        console.log(`[Editor ${editorIdRef.current}] ========================================`)
+        
         if (editorRef.current && currentContext && existingRule) {
           sendModifyRequest(editorRef.current, currentPrompt, currentContext, existingRule)
         } else {
-          console.warn('[Editor] Editor ref, rule context, or existing rule not available')
+          console.warn('[Editor] ⚠️  Editor ref, rule context, or existing rule not available')
+          console.warn('[Editor]   - Editor:', !!editorRef.current)
+          console.warn('[Editor]   - Context:', !!currentContext)
+          console.warn('[Editor]   - Rule:', !!existingRule)
         }
       }, 100)
     } else {
@@ -402,9 +433,9 @@ export function EditorWithDiff({
     // Log editor info for debugging
     const model = editor.getModel()
     if (model) {
-      console.log('[Editor] Editor mounted - Language:', model.getLanguageId(), 'URI:', model.uri.toString())
+      console.log(`[Editor ${editorIdRef.current}] Editor mounted - Language:`, model.getLanguageId(), 'URI:', model.uri.toString(), 'Title:', title)
     } else {
-      console.log('[Editor] Editor mounted but model not available yet')
+      console.log(`[Editor ${editorIdRef.current}] Editor mounted but model not available yet - Title:`, title)
     }
   }
 
@@ -417,7 +448,7 @@ export function EditorWithDiff({
     // Log editor info for debugging
     const model = modifiedEditor.getModel()
     if (model) {
-      console.log('[Editor] Diff Editor mounted - Modified editor Language:', model.getLanguageId(), 'URI:', model.uri.toString())
+      console.log(`[Editor ${editorIdRef.current}] Diff Editor mounted - Modified editor Language:`, model.getLanguageId(), 'URI:', model.uri.toString(), 'Title:', title)
     }
     
     // Listen for changes in the modified editor
@@ -433,51 +464,150 @@ export function EditorWithDiff({
       event.preventDefault()
     }
     
+    console.log(`[Editor ${editorIdRef.current}] ========================================`)
+    console.log(`[Editor ${editorIdRef.current}] 🖱️  SUGGESTION SELECTED`)
+    console.log(`[Editor ${editorIdRef.current}] ----------------------------------------`)
+    console.log(`[Editor ${editorIdRef.current}]   - Editor ID:`, editorIdRef.current)
+    console.log(`[Editor ${editorIdRef.current}]   - Editor Title:`, title)
+    console.log(`[Editor ${editorIdRef.current}]   - Label:`, typeof suggestion.label === 'string' ? suggestion.label : suggestion.label.label)
+    console.log(`[Editor ${editorIdRef.current}]   - Insert Text Length:`, suggestion.insertText ? suggestion.insertText.length : 0)
+    console.log(`[Editor ${editorIdRef.current}]   - Has Range:`, !!suggestion.range)
+    if (suggestion.range) {
+      const range = suggestion.range as any
+      console.log(`[Editor ${editorIdRef.current}]   - Range:`, {
+        startLine: range.startLineNumber,
+        startColumn: range.startColumn,
+        endLine: range.endLineNumber,
+        endColumn: range.endColumn
+      })
+    }
+    console.log(`[Editor ${editorIdRef.current}]   - Stored Rule Context:`, ruleContext ? {
+      startLine: ruleContext.startLine,
+      endLine: ruleContext.endLine,
+      startColumn: ruleContext.startColumn,
+      endColumn: ruleContext.endColumn
+    } : 'none')
+    console.log(`[Editor ${editorIdRef.current}]   - Editor Ref Available:`, !!editorRef.current)
+    if (editorRef.current) {
+      const model = editorRef.current.getModel()
+      console.log(`[Editor ${editorIdRef.current}]   - Editor URI:`, model?.uri.toString())
+      console.log(`[Editor ${editorIdRef.current}]   - Editor Language:`, model?.getLanguageId())
+    }
+    console.log(`[Editor ${editorIdRef.current}] ----------------------------------------`)
+    
     // Close dropdown immediately
     setShowSuggestionsDropdown(false)
     setSuggestions([])
     
-    if (editorRef.current) {
-      const editor = editorRef.current
-      const model = editor.getModel()
-      
-      if (model && suggestion.insertText) {
-        // Check if this is a modify suggestion (has range with start/end lines)
-        const suggestionRange = suggestion.range as any
-        if (suggestionRange && suggestionRange.startLineNumber && suggestionRange.endLineNumber && 
-            suggestionRange.startLineNumber !== suggestionRange.endLineNumber) {
-          // This is a modify suggestion - replace the rule
-          console.log('[Editor] 🔄 Replacing rule with modified version')
-          const range = new monaco.Range(
+    if (!editorRef.current) {
+      console.error(`[Editor ${editorIdRef.current}] ❌ Editor ref not available`)
+      console.log(`[Editor ${editorIdRef.current}] ========================================`)
+      return
+    }
+    
+    const editor = editorRef.current
+    const model = editor.getModel()
+    
+    // Verify we're using the correct editor instance
+    if (model) {
+      const currentUri = model.uri.toString()
+      console.log(`[Editor ${editorIdRef.current}]   - Verifying editor instance:`)
+      console.log(`[Editor ${editorIdRef.current}]     - Current URI:`, currentUri)
+      console.log(`[Editor ${editorIdRef.current}]     - Filename:`, filename)
+      console.log(`[Editor ${editorIdRef.current}]     - Title:`, title)
+    }
+    
+    if (!model) {
+      console.error(`[Editor ${editorIdRef.current}] ❌ Model not available`)
+      console.log(`[Editor ${editorIdRef.current}] ========================================`)
+      return
+    }
+    
+    if (!suggestion.insertText) {
+      console.error(`[Editor ${editorIdRef.current}] ❌ No insert text in suggestion`)
+      console.log(`[Editor ${editorIdRef.current}] ========================================`)
+      return
+    }
+    
+    // Check if this is a modify suggestion
+    // Priority 1: Check if we have stored ruleContext (from modify dialog)
+    // Priority 2: Check if suggestion has a range with different start/end lines
+    const suggestionRange = suggestion.range as any
+    const isModifySuggestion = ruleContext || 
+      (suggestionRange && suggestionRange.startLineNumber && suggestionRange.endLineNumber && 
+       suggestionRange.startLineNumber !== suggestionRange.endLineNumber)
+    
+    if (isModifySuggestion) {
+      // This is a modify suggestion - replace the rule
+      const rangeToUse = ruleContext 
+        ? new monaco.Range(
+            ruleContext.startLine,
+            ruleContext.startColumn || 1,
+            ruleContext.endLine,
+            ruleContext.endColumn || 1000
+          )
+        : new monaco.Range(
             suggestionRange.startLineNumber,
             suggestionRange.startColumn || 1,
             suggestionRange.endLineNumber,
             suggestionRange.endColumn || 1000
           )
-          editor.executeEdits('lsp-modify-rule', [{
-            range,
-            text: suggestion.insertText
-          }])
-          console.log('[Editor] ✅ Rule replaced with modified version:', suggestion.label)
-        } else {
-          // This is a generate suggestion - insert at cursor
-          const position = editor.getPosition()
-          if (position) {
-            const range = new monaco.Range(
-              position.lineNumber,
-              position.column,
-              position.lineNumber,
-              position.column
-            )
-            editor.executeEdits('lsp-suggestion', [{
-              range,
-              text: suggestion.insertText
-            }])
-            console.log('[Editor] ✅ Inserted suggestion:', suggestion.label)
-          }
-        }
+      
+      console.log(`[Editor ${editorIdRef.current}] 🔄 MODIFY MODE: Replacing rule with modified version`)
+      console.log(`[Editor ${editorIdRef.current}]   - Replacement Range:`, {
+        startLine: rangeToUse.startLineNumber,
+        startColumn: rangeToUse.startColumn,
+        endLine: rangeToUse.endLineNumber,
+        endColumn: rangeToUse.endColumn
+      })
+      console.log(`[Editor ${editorIdRef.current}]   - New Rule Length:`, suggestion.insertText.length, 'chars')
+      console.log(`[Editor ${editorIdRef.current}]   - New Rule Preview:`, suggestion.insertText.substring(0, 100) + '...')
+      
+      // Get current content at range for verification
+      const currentContent = model.getValueInRange(rangeToUse)
+      console.log(`[Editor ${editorIdRef.current}]   - Current Content at Range (${currentContent.length} chars):`, currentContent.substring(0, 100) + '...')
+      
+      // Perform the replacement
+      const editResult = editor.executeEdits('lsp-modify-rule', [{
+        range: rangeToUse,
+        text: suggestion.insertText
+      }])
+      
+      console.log(`[Editor ${editorIdRef.current}]   - Edit Result:`, editResult)
+      
+      // Verify the replacement
+      const newContent = model.getValue()
+      const newContentAtRange = model.getValueInRange(rangeToUse)
+      console.log(`[Editor ${editorIdRef.current}]   - Document length after replacement:`, newContent.length, 'chars')
+      console.log(`[Editor ${editorIdRef.current}]   - New Content at Range (${newContentAtRange.length} chars):`, newContentAtRange.substring(0, 100) + '...')
+      console.log(`[Editor ${editorIdRef.current}] ✅ Rule replaced with modified version:`, suggestion.label)
+      
+      // Clear the rule context after replacement
+      setRuleContext(null)
+      setExistingRule(null)
+    } else {
+      // This is a generate suggestion - insert at cursor
+      const position = editor.getPosition()
+      if (position) {
+        console.log(`[Editor ${editorIdRef.current}] ✨ GENERATE MODE: Inserting new rule at cursor`)
+        console.log(`[Editor ${editorIdRef.current}]   - Position: Line`, position.lineNumber, 'Column', position.column)
+        const range = new monaco.Range(
+          position.lineNumber,
+          position.column,
+          position.lineNumber,
+          position.column
+        )
+        editor.executeEdits('lsp-suggestion', [{
+          range,
+          text: suggestion.insertText
+        }])
+        console.log(`[Editor ${editorIdRef.current}] ✅ Inserted suggestion:`, suggestion.label)
+      } else {
+        console.error(`[Editor ${editorIdRef.current}] ❌ No cursor position available`)
       }
     }
+    
+    console.log(`[Editor ${editorIdRef.current}] ========================================`)
   }
 
   return (

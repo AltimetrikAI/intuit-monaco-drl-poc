@@ -435,21 +435,26 @@ export function startLSPServer(port = 4001) {
             console.log(`[LSP] 📝 MODIFY DETAILS:`)
             console.log(`[LSP]   - Modify prompt: "${userPrompt}"`)
             console.log(`[LSP]   - Existing rule length: ${existingRule ? existingRule.length : 0} chars`)
+            if (existingRule) {
+              console.log(`[LSP]   - Existing rule preview: ${existingRule.substring(0, 100)}...`)
+            }
             
-            // For now, return a mock modified rule
-            // In the future, this will use AI to modify the rule based on the prompt
-            const mockModifiedRule = existingRule 
-              ? existingRule.replace(/premium > 500/g, 'premium > 1000') // Simple mock modification
-              : `rule "Modified Rule"
+            // Static mocked updated rule - this will be replaced with AI-generated rule in the future
+            const mockModifiedRule = `rule "Flag high premium greater than 1000"
 
 when
     $quote : Quote(premium > 1000)
 
 then
     $quote.setRequiresReview(true);
-    System.out.println("Quote requires case review - modified");
+    $quote.setPriority("HIGH");
+    System.out.println("Quote requires case review - premium threshold updated to 1000");
 
 end`
+            
+            console.log(`[LSP]   - Mock modified rule length: ${mockModifiedRule.length} chars`)
+            console.log(`[LSP]   - Mock modified rule preview:`)
+            console.log(`[LSP]     ${mockModifiedRule.split('\n').slice(0, 3).join('\n     ')}...`)
             
             const completions = [{
               label: 'Modified Rule',

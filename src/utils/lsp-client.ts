@@ -676,24 +676,40 @@ export function triggerModifyRule(
         console.log('[LSP Client] ----------------------------------------')
         
         const items = message.result?.items || []
+        console.log('[LSP Client]   - Response items count:', items.length)
         if (items.length > 0) {
           console.log('[LSP Client]   - Modified rule suggestions received:', items.length)
+          items.forEach((item: any, idx: number) => {
+            console.log(`[LSP Client]     Item ${idx + 1}:`)
+            console.log(`[LSP Client]       - Label: "${item.label}"`)
+            console.log(`[LSP Client]       - Insert Text Length: ${(item.insertText || '').length} chars`)
+            console.log(`[LSP Client]       - Insert Text Preview: ${(item.insertText || '').substring(0, 100)}...`)
+          })
           
-          // Convert to Monaco suggestions
-          const suggestions = items.map((item: any) => ({
-            label: item.label,
-            kind: item.kind || monaco.languages.CompletionItemKind.Snippet,
-            detail: item.detail,
-            insertText: item.insertText || item.label,
-            insertTextRules: item.insertTextRules || undefined,
-            documentation: item.documentation,
-            range: {
-              startLineNumber: ruleContext.startLine,
-              startColumn: 1,
-              endLineNumber: ruleContext.endLine,
-              endColumn: ruleContext.endColumn
+          // Convert to Monaco suggestions with proper range for replacement
+          const suggestions = items.map((item: any) => {
+            const suggestion = {
+              label: item.label,
+              kind: item.kind || monaco.languages.CompletionItemKind.Snippet,
+              detail: item.detail,
+              insertText: item.insertText || item.label,
+              insertTextRules: item.insertTextRules || undefined,
+              documentation: item.documentation,
+              range: {
+                startLineNumber: ruleContext.startLine,
+                startColumn: ruleContext.startColumn || 1,
+                endLineNumber: ruleContext.endLine,
+                endColumn: ruleContext.endColumn || 1000
+              }
             }
-          }))
+            console.log('[LSP Client]   - Created suggestion with range:', {
+              startLine: suggestion.range.startLineNumber,
+              startColumn: suggestion.range.startColumn,
+              endLine: suggestion.range.endLineNumber,
+              endColumn: suggestion.range.endColumn
+            })
+            return suggestion
+          })
           
           // Store suggestions and rule context for replacement
           pendingSuggestions = suggestions
