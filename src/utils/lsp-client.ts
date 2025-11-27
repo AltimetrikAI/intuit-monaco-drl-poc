@@ -1,11 +1,107 @@
-import * as monaco from 'monaco-editor'
+async function requestInlineCompletionsFromServer(
+  model: Monaco.editor.ITextModel,
+  position: Monaco.Position,
+  userPrompt?: string
+): Promise<Monaco.languages.InlineCompletion[]> {
+  const socket = ws
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    console.warn('[LSP Client] ⚠️  Cannot request inline completions: WebSocket not ready')
+    return []
+  }
+
+  const monaco = getMonaco()
+  const requestId = Date.now()
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn('[LSP Client] ⚠️  Inline completion request timed out')
+      socket.removeEventListener('message', handler)
+      resolve([])
+    }, 3000)
+
+    const handler = (event: MessageEvent) => {
+      try {
+        const message = JSON.parse(event.data)
+        if (message.id === requestId && message.result) {
+          clearTimeout(timeout)
+          socket.removeEventListener('message', handler)
+
+          const items = message.result?.items || []
+          if (items.length === 0) {
+            resolve([])
+            return
+          }
+
+          const inlineItems = items.map((item: any) => ({
+            insertText: item.insertText || item.label,
+            filterText: typeof item.label === 'string' ? item.label : item.label?.label,
+            range: new monaco.Range(
+              position.lineNumber,
+              position.column,
+              position.lineNumber,
+              position.column
+            )
+          }))
+
+          resolve(inlineItems)
+        }
+      } catch (error) {
+        console.error('[LSP Client] ❌ Inline completion parse error:', error)
+        clearTimeout(timeout)
+        socket.removeEventListener('message', handler)
+        resolve([])
+      }
+    }
+
+    socket.addEventListener('message', handler)
+
+    const message = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'textDocument/completion',
+      params: {
+        textDocument: {
+          uri: model.uri.toString()
+        },
+        position: {
+          line: position.lineNumber - 1,
+          character: position.column - 1
+        },
+        mode: 'generate',
+        userPrompt: userPrompt || undefined
+      }
+    }
+
+    socket.send(JSON.stringify(message))
+  })
+}
+import loader from '@monaco-editor/loader'
+import type * as Monaco from 'monaco-editor'
+import 'monaco-editor/esm/vs/editor/contrib/inlineCompletions/browser/inlineCompletions.contribution'
 
 let ws: WebSocket | null = null
-let completionProvider: monaco.IDisposable | null = null
+let completionProvider: Monaco.IDisposable | null = null
 let isConnected = false
-let pendingSuggestions: monaco.languages.CompletionItem[] | null = null
+let pendingSuggestions: Monaco.languages.CompletionItem[] | null = null
 let pendingModifyRuleContext: {ruleContext: RuleContext, existingRule: string} | null = null // Store rule context for modify replacement
 let onShowGenerateDialog: ((mode: 'generate' | 'modify', existingRule?: string, ruleContext?: RuleContext) => void) | null = null
+let inlineCompletionsProvider: Monaco.IDisposable | null = null
+let monacoInstance: typeof import('monaco-editor') | null = null
+
+async function loadMonaco(): Promise<typeof import('monaco-editor')> {
+  if (monacoInstance) {
+    return monacoInstance
+  }
+  monacoInstance = await loader.init()
+  return monacoInstance
+}
+
+function getMonaco(): typeof import('monaco-editor') {
+  if (!monacoInstance) {
+    throw new Error('[LSP Client] Monaco has not been initialized yet')
+  }
+  return monacoInstance
+}
 
 /**
  * Rule context information
@@ -25,8 +121,8 @@ interface RuleContext {
  * Returns rule context if inside a rule, null otherwise
  */
 function detectRuleAtPosition(
-  model: monaco.editor.ITextModel,
-  position: monaco.Position
+  model: Monaco.editor.ITextModel,
+  position: Monaco.Position
 ): RuleContext | null {
   const content = model.getValue()
   const lines = content.split('\n')
@@ -102,7 +198,7 @@ function detectRuleAtPosition(
 /**
  * Get human-readable name for completion item kind
  */
-function getCompletionKindName(kind: monaco.languages.CompletionItemKind | undefined): string {
+function getCompletionKindName(kind: Monaco.languages.CompletionItemKind | undefined): string {
   if (!kind) return 'Unknown'
   const kindMap: Record<number, string> = {
     1: 'Text',
@@ -145,9 +241,10 @@ interface LSPContext {
  * Initialize LSP client and connect to server
  */
 export async function initializeLSP(
-  editor: monaco.editor.IStandaloneCodeEditor,
+  editor: Monaco.editor.IStandaloneCodeEditor,
   context: LSPContext
 ): Promise<boolean> {
+  const monaco = await loadMonaco()
   // Store editor reference for manual triggering
   globalEditorRef = editor
   
@@ -210,14 +307,23 @@ export async function initializeLSP(
     // Register completion provider for Java language
     // Note: Monaco will call this when suggestions are triggered
     completionProvider = monaco.languages.registerCompletionItemProvider('java', {
-      provideCompletionItems: async (model: monaco.editor.ITextModel, position: monaco.Position, context: monaco.languages.CompletionContext) => {
+      provideCompletionItems: async (model: Monaco.editor.ITextModel, position: Monaco.Position, context: Monaco.languages.CompletionContext) => {
+        console.log('[LSP Client] 🔍 provideCompletionItems CALLED')
+        console.log('[LSP Client]   - Language:', model.getLanguageId())
+        console.log('[LSP Client]   - Trigger kind:', context.triggerKind, `(${context.triggerKind === monaco.languages.CompletionTriggerKind.Invoke ? 'Invoke' : context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter ? 'TriggerCharacter' : 'Automatic'})`)
+        console.log('[LSP Client]   - Position:', position.lineNumber, position.column)
+        
         // Verify language matches
         if (model.getLanguageId() !== 'java') {
+          console.log('[LSP Client]   ⚠️  Language mismatch, returning empty')
           return { suggestions: [] }
         }
         
-        // Only return LSP suggestions if we have pending suggestions (from button/right-click)
-        // During normal typing, return empty so normal Java suggestions work
+        // Check if this is a manual trigger (Ctrl+Space or programmatic)
+        const isManualTrigger = context.triggerKind === monaco.languages.CompletionTriggerKind.Invoke
+        console.log('[LSP Client]   - Is manual trigger:', isManualTrigger)
+        
+        // If we have pending suggestions (from button/right-click), return them
         if (pendingSuggestions && pendingSuggestions.length > 0) {
           console.log('[LSP Client] ========================================')
           console.log('[LSP Client] ✅ RETURNING LSP SUGGESTIONS')
@@ -245,7 +351,38 @@ export async function initializeLSP(
           return { suggestions }
         }
         
-        // During normal typing (not button/right-click), return empty
+        // If Ctrl+Space is pressed (manual trigger), return mock LSP suggestion
+        if (isManualTrigger) {
+          console.log('[LSP Client] ========================================')
+          console.log('[LSP Client] ⌨️  CTRL+SPACE DETECTED')
+          console.log('[LSP Client] ----------------------------------------')
+          console.log('[LSP Client]   - Trigger kind: Invoke (manual trigger)')
+          console.log('[LSP Client]   - Returning mock LSP suggestion')
+          
+          // For now, return a mock suggestion without hitting LSP server
+          const mockSuggestion: Monaco.languages.CompletionItem = {
+            label: 'Rule "Auto suggested"',
+            kind: monaco.languages.CompletionItemKind.Snippet,
+            detail: 'Auto-suggested DRL Rule',
+            insertText: 'rule "Auto suggested"\n\nwhen\n    $quote : Quote()\n\nthen\n    // Auto-generated rule\nend',
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            documentation: {
+              value: 'Auto-suggested rule from LSP (mock)'
+            },
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn: position.column,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column
+            }
+          }
+          
+          console.log('[LSP Client]   - Mock suggestion: "Rule \\"Auto suggested\\""')
+          console.log('[LSP Client] ========================================')
+          return { suggestions: [mockSuggestion] }
+        }
+        
+        // During normal typing (not manual trigger), return empty
         // This allows normal Java suggestions to work
         return { suggestions: [] }
       },
@@ -256,11 +393,76 @@ export async function initializeLSP(
     
     console.log('[LSP Client] ✅ Completion provider registered successfully')
 
-    // Add keyboard shortcut to manually trigger completion (for testing)
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
-      console.log('[LSP Client] ⌨️  Ctrl+Space keyboard shortcut triggered manually!')
-      sendCompletionRequest(editor)
+    // Register inline completions provider for AI suggestions (ghost text)
+    if (inlineCompletionsProvider) {
+      inlineCompletionsProvider.dispose()
+    }
+    
+    inlineCompletionsProvider = monaco.languages.registerInlineCompletionsProvider('java', {
+      provideInlineCompletions: async (model, position, context, token) => {
+        console.log('[LSP Client] 🔍 Inline completions requested')
+        console.log('[LSP Client]   - Position:', position.lineNumber, position.column)
+        console.log('[LSP Client]   - Trigger kind:', context.triggerKind)
+
+        const isExplicitTrigger = context.triggerKind === monaco.languages.InlineCompletionTriggerKind.Explicit
+        if (!isExplicitTrigger) {
+          console.log('[LSP Client]   - Automatic trigger detected, returning no inline suggestions')
+          return { items: [] }
+        }
+        
+        try {
+          const inlineItems = await requestInlineCompletionsFromServer(model, position)
+          return { items: inlineItems }
+        } catch (error) {
+          console.error('[LSP Client] ❌ Failed to fetch inline completions:', error)
+          return { items: [] }
+        }
+      },
+      freeInlineCompletions: (completions) => {
+        // Cleanup if necessary
+      }
     })
+    
+    console.log('[LSP Client] ✅ Inline completions provider registered')
+
+    // Mac-friendly keyboard shortcuts for triggering inline suggestions
+    // Option+Space (Alt+Space) - Most reliable on Mac
+    editor.addCommand(
+      monaco.KeyMod.Alt | monaco.KeyCode.Space,
+      () => {
+        console.log('[LSP Client] ⌨️  Option+Space detected - triggering inline suggestions')
+        // Trigger inline suggestions
+        editor.trigger('lsp', 'editor.action.inlineSuggest.trigger', {})
+      },
+      'editorTextFocus'
+    )
+    
+    // Cmd+Space - May conflict with Spotlight, but try it
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space,
+      () => {
+        console.log('[LSP Client] ⌨️  Cmd+Space detected - triggering inline suggestions')
+        editor.trigger('lsp', 'editor.action.inlineSuggest.trigger', {})
+      },
+      'editorTextFocus'
+    )
+    
+    // DOM event listener fallback for Ctrl+Space
+    const domNode = editor.getDomNode()
+    if (domNode) {
+      const keydownHandler = (e: KeyboardEvent) => {
+        if (e.ctrlKey && !e.metaKey && e.code === 'Space') {
+          e.preventDefault()
+          e.stopPropagation()
+          console.log('[LSP Client] ⌨️  Ctrl+Space detected via DOM listener - triggering inline suggestions')
+          editor.trigger('lsp', 'editor.action.inlineSuggest.trigger', {})
+        }
+      }
+      
+      domNode.addEventListener('keydown', keydownHandler, true)
+      ;(editor as any)._lspKeydownHandler = keydownHandler
+      console.log('[LSP Client] ✅ DOM event listener registered for Ctrl+Space fallback')
+    }
     
     // Add context menu actions for Generate and Modify
     try {
@@ -402,7 +604,7 @@ export function sendDocumentContent(content: string): void {
  * @param editor - Editor instance
  * @param userPrompt - Optional user prompt for rule generation
  */
-function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
+function sendCompletionRequest(editor: Monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
   console.log('[LSP Client] ========================================')
   console.log('[LSP Client] 🔘 STEP 1: INITIATING COMPLETION REQUEST')
   console.log('[LSP Client] ----------------------------------------')
@@ -414,6 +616,14 @@ function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor, user
     return
   }
   console.log('[LSP Client] ✅ WebSocket is OPEN and ready')
+
+  let monaco: typeof import('monaco-editor')
+  try {
+    monaco = getMonaco()
+  } catch (error) {
+    console.error('[LSP Client] ❌ Monaco instance not available:', error)
+    return
+  }
 
   const model = editor.getModel()
   const position = editor.getPosition()
@@ -485,7 +695,7 @@ function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor, user
           console.log('[LSP Client] ✅ STEP 3: PROCESSING SUGGESTIONS FROM SERVER')
           console.log('[LSP Client] ----------------------------------------')
           console.log('[LSP Client]   - Received from server:', suggestions.length, 'suggestion(s)')
-          suggestions.forEach((sug: monaco.languages.CompletionItem, idx: number) => {
+          suggestions.forEach((sug: Monaco.languages.CompletionItem, idx: number) => {
             const label = typeof sug.label === 'string' ? sug.label : sug.label.label
             console.log(`[LSP Client]     Item ${idx + 1}: "${label}" (${getCompletionKindName(sug.kind)})`)
           })
@@ -565,7 +775,7 @@ function sendCompletionRequest(editor: monaco.editor.IStandaloneCodeEditor, user
  * @param editor - Optional editor instance
  * @param userPrompt - Optional user prompt/input for rule generation
  */
-export function triggerCompletion(editor?: monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
+export function triggerCompletion(editor?: Monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
   const editorToUse = editor || globalEditorRef
   
   if (editorToUse) {
@@ -581,13 +791,13 @@ export function triggerCompletion(editor?: monaco.editor.IStandaloneCodeEditor, 
   }
 }
 
-let globalEditorRef: monaco.editor.IStandaloneCodeEditor | null = null
-let onSuggestionsReady: ((suggestions: monaco.languages.CompletionItem[]) => void) | null = null
+let globalEditorRef: Monaco.editor.IStandaloneCodeEditor | null = null
+let onSuggestionsReady: ((suggestions: Monaco.languages.CompletionItem[]) => void) | null = null
 
 /**
  * Register callback for when suggestions are ready to display
  */
-export function setOnSuggestionsReady(callback: (suggestions: monaco.languages.CompletionItem[]) => void): void {
+export function setOnSuggestionsReady(callback: (suggestions: Monaco.languages.CompletionItem[]) => void): void {
   onSuggestionsReady = callback
 }
 
@@ -599,11 +809,12 @@ export function setOnShowGenerateDialog(callback: (mode: 'generate' | 'modify', 
   console.log('[LSP Client] ✅ Registered onShowGenerateDialog callback')
 }
 
+
 /**
  * Replace a rule in the editor with new rule text
  */
 export function replaceRuleInEditor(
-  editor: monaco.editor.IStandaloneCodeEditor,
+  editor: Monaco.editor.IStandaloneCodeEditor,
   ruleContext: RuleContext,
   newRuleText: string
 ): void {
@@ -618,6 +829,7 @@ export function replaceRuleInEditor(
   console.log('[LSP Client]   - Lines:', ruleContext.startLine, 'to', ruleContext.endLine)
   console.log('[LSP Client]   - New rule length:', newRuleText.length, 'chars')
   
+  const monaco = getMonaco()
   const range = new monaco.Range(
     ruleContext.startLine,
     1, // Start from beginning of start line
@@ -637,7 +849,7 @@ export function replaceRuleInEditor(
  * Trigger modify rule request to LSP server
  */
 export function triggerModifyRule(
-  editor: monaco.editor.IStandaloneCodeEditor,
+  editor: Monaco.editor.IStandaloneCodeEditor,
   modifyPrompt: string,
   ruleContext: {startLine: number, endLine: number, startColumn: number, endColumn: number},
   existingRule: string
@@ -682,7 +894,7 @@ export function triggerModifyRule(
           // Convert to Monaco suggestions
           const suggestions = items.map((item: any) => ({
             label: item.label,
-            kind: item.kind || monaco.languages.CompletionItemKind.Snippet,
+            kind: item.kind || getMonaco().languages.CompletionItemKind.Snippet,
             detail: item.detail,
             insertText: item.insertText || item.label,
             insertTextRules: item.insertTextRules || undefined,
@@ -774,6 +986,23 @@ export function disconnectLSP(): void {
     completionProvider.dispose()
     completionProvider = null
   }
+  
+  if (inlineCompletionsProvider) {
+    inlineCompletionsProvider.dispose()
+    inlineCompletionsProvider = null
+  }
+  
+  // Clean up DOM event listener if it exists
+  if (globalEditorRef) {
+    const domNode = globalEditorRef.getDomNode()
+    const handler = (globalEditorRef as any)?._lspKeydownHandler
+    if (domNode && handler) {
+      domNode.removeEventListener('keydown', handler, true)
+      delete (globalEditorRef as any)._lspKeydownHandler
+      console.log('[LSP Client] 🧹 Cleaned up DOM event listener')
+    }
+  }
+  
   if (ws) {
     ws.close()
     ws = null

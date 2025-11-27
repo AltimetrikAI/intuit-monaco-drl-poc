@@ -116,6 +116,10 @@ export function EditorWithDiff({
         showFunctions: true,
         showVariables: true,
         showFields: true
+      },
+      // Enable inline suggestions (ghost text)
+      inlineSuggest: {
+        enabled: true
       }
     }),
     []
@@ -444,20 +448,26 @@ export function EditorWithDiff({
       if (model && suggestion.insertText) {
         // Check if this is a modify suggestion (has range with start/end lines)
         const suggestionRange = suggestion.range as any
-        if (suggestionRange && suggestionRange.startLineNumber && suggestionRange.endLineNumber && 
-            suggestionRange.startLineNumber !== suggestionRange.endLineNumber) {
+        const hasRange =
+          suggestionRange &&
+          suggestionRange.startLineNumber &&
+          suggestionRange.endLineNumber
+
+        if (hasRange) {
           // This is a modify suggestion - replace the rule
           console.log('[Editor] 🔄 Replacing rule with modified version')
           const range = new monaco.Range(
             suggestionRange.startLineNumber,
             suggestionRange.startColumn || 1,
             suggestionRange.endLineNumber,
-            suggestionRange.endColumn || 1000
+            suggestionRange.endColumn || model.getLineMaxColumn(suggestionRange.endLineNumber)
           )
-          editor.executeEdits('lsp-modify-rule', [{
-            range,
-            text: suggestion.insertText
-          }])
+          editor.executeEdits('lsp-modify-rule', [
+            {
+              range,
+              text: suggestion.insertText
+            }
+          ])
           console.log('[Editor] ✅ Rule replaced with modified version:', suggestion.label)
         } else {
           // This is a generate suggestion - insert at cursor

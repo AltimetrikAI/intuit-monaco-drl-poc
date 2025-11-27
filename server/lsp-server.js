@@ -19,17 +19,11 @@ const ruleTemplates = [
     
     // Rule content
     ruleContent: `rule "Flag high premium greater than 500"
-
 when
-
     $quote : Quote(premium > 500)
-
 then
-
     $quote.setRequiresReview(true);
-
     System.out.println("Quote requires case review");
-
 end`,
     
     // Completion item settings
@@ -84,6 +78,59 @@ function upsertTemplate(template) {
  */
 function getTemplatesByFilter(filterFn) {
   return ruleTemplates.filter(filterFn)
+}
+
+function indentBlock(text, spaces = 4) {
+  const pad = ' '.repeat(spaces)
+  return text
+    .split('\n')
+    .map(line => (line.trim().length ? pad + line.trim() : ''))
+    .join('\n')
+}
+
+function buildMockModifiedRule(existingRule, userPrompt) {
+  const safePrompt = (userPrompt && userPrompt.trim()) || 'user modification request'
+  const baseRule = existingRule && existingRule.trim().length > 0
+    ? existingRule
+    : `rule "Sample Rule"
+when
+    $quote : Quote(premium > 500)
+then
+    $quote.setRequiresReview(true);
+end`
+
+  const nameMatch = baseRule.match(/rule\s+"([^"]+)"/i)
+  const baseName = nameMatch ? nameMatch[1] : 'Rule'
+  const newRuleName = `${baseName} (Modified)`
+
+  const conditionMatch = baseRule.match(/when([\s\S]*?)then/i)
+  const actionMatch = baseRule.match(/then([\s\S]*?)end/i)
+
+  const rawCondition = (conditionMatch && conditionMatch[1].trim()) || '$quote : Quote(premium > 750)'
+  const rawAction = (actionMatch && actionMatch[1].trim()) || '$quote.setRequiresReview(true);\n$quote.setEscalated(true);'
+
+  const conditionBlock = indentBlock(rawCondition)
+  const actionBlock = indentBlock(
+    `${rawAction}
+
+// Mock modification applied
+$quote.addNote("Automated update based on: ${safePrompt}");`
+  )
+
+  const modifiedRule = `rule "${newRuleName}"
+
+when
+${conditionBlock}
+
+then
+${actionBlock}
+    System.out.println("Mock modification applied: ${safePrompt}");
+end`
+
+  return {
+    ruleName: newRuleName,
+    ruleText: modifiedRule
+  }
 }
 
 /**
@@ -441,14 +488,11 @@ export function startLSPServer(port = 4001) {
             const mockModifiedRule = existingRule 
               ? existingRule.replace(/premium > 500/g, 'premium > 1000') // Simple mock modification
               : `rule "Modified Rule"
-
 when
     $quote : Quote(premium > 1000)
-
 then
     $quote.setRequiresReview(true);
     System.out.println("Quote requires case review - modified");
-
 end`
             
             const completions = [{
