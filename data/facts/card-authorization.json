@@ -1,0 +1,22 @@
+{
+  "transactionId": "TXN-2024-001234",
+  "amount": 1250.50,
+  "currency": "USD",
+  "merchantCategory": "RETAIL",
+  "cardType": "VISA",
+  "issuerCountry": "US",
+  "merchantCountry": "UA",
+  "merchantRegion": "Crimea",
+  "merchantCity": "Sevastopol",
+  "deviceType": "MOBILE",
+  "osVersion": "Android 12",
+  "isRooted": true,
+  "isEmulator": false,
+  "ipAddress": "192.168.1.100",
+  "isAuthorized": false,
+  "declineReason": null,
+  "riskScore": 0,
+  "requiresManualReview": false,
+  "isHighRiskTransaction": false
+}
+

@@ -15,17 +15,21 @@ let wss = null
 const ruleTemplates = [
   {
     // Rule metadata (header, description, documentation)
-    label: 'Flag high premium greater than 500',
-    detail: 'DRL Rule Template',
-    documentation: 'A rule that flags quotes with premium greater than 500 for review',
+    label: 'Block restricted geolocation - Crimea',
+    detail: 'DRL Compliance Rule Template',
+    documentation: 'A compliance rule that blocks transactions from restricted geolocations like Crimea',
     
     // Rule content
-    ruleContent: `rule "Flag high premium greater than 500"
+    ruleContent: `rule "Block restricted geolocations - Crimea"
 when
-    $quote : Quote(premium > 500)
+    $request : CardAuthorizationRequest(
+        merchantCountry == "UA" && merchantRegion == "Crimea"
+    )
 then
-    $quote.setRequiresReview(true);
-    System.out.println("Quote requires case review");
+    $request.setAuthorized(false);
+    $request.setDeclineReason("Transaction declined: Restricted geolocation (Crimea)");
+    $request.setRiskScore(100);
+    System.out.println("COMPLIANCE ALERT: Transaction blocked from restricted geolocation");
 end`,
     
     // Completion item settings
@@ -101,11 +105,12 @@ function buildMockModifiedRule(existingRule, userPrompt) {
   const safePrompt = (userPrompt && userPrompt.trim()) || 'user modification request'
   const baseRule = existingRule && existingRule.trim().length > 0
     ? existingRule
-    : `rule "Sample Rule"
+    : `rule "Sample Compliance Rule"
 when
-    $quote : Quote(premium > 500)
+    $request : CardAuthorizationRequest(merchantCountry == "UA" && merchantRegion == "Crimea")
 then
-    $quote.setRequiresReview(true);
+    $request.setAuthorized(false);
+    $request.setDeclineReason("Transaction declined: Restricted geolocation");
 end`
   
   // Extract rule name
@@ -117,8 +122,8 @@ end`
   const conditionMatch = baseRule.match(/when([\s\S]*?)then/i)
   const actionMatch = baseRule.match(/then([\s\S]*?)end/i)
   
-  const rawCondition = (conditionMatch && conditionMatch[1].trim()) || '$quote : Quote(premium > 750)'
-  const rawAction = (actionMatch && actionMatch[1].trim()) || '$quote.setRequiresReview(true);\n$quote.setEscalated(true);'
+  const rawCondition = (conditionMatch && conditionMatch[1].trim()) || '$request : CardAuthorizationRequest(isRooted == true)'
+  const rawAction = (actionMatch && actionMatch[1].trim()) || '$request.setRiskScore($request.getRiskScore() + 30);\n$request.setRequiresManualReview(true);'
   
   // Format with indentation
   const condition = indentBlock(rawCondition, 4)
@@ -235,7 +240,7 @@ function parseContext(documentContent, position) {
   
   // Detect context patterns
   const context = {
-    afterQuoteConstructor: /Quote\s*\(/.test(beforeCursor),
+    afterCardAuthConstructor: /CardAuthorizationRequest\s*\(/.test(beforeCursor),
     afterVariableDot: /\$\w+\./.test(beforeCursor),
     inWhenClause: isInClause(documentContent, position.line, 'when'),
     inThenClause: isInClause(documentContent, position.line, 'then'),
@@ -587,18 +592,18 @@ function handleCompletionRequest(session, position, documentContent) {
     { label: 'import', kind: 14, detail: 'DRL keyword', insertText: 'import ' }
   )
   
-  // Always provide Quote fact suggestions
+  // Always provide CardAuthorizationRequest fact suggestions
   completions.push({
-    label: 'Quote',
+    label: 'CardAuthorizationRequest',
     kind: 7, // Class
-    detail: 'Quote fact object',
-    insertText: 'Quote'
+    detail: 'CardAuthorizationRequest fact object',
+    insertText: 'CardAuthorizationRequest'
   })
   completions.push({
-    label: '$quote',
+    label: '$request',
     kind: 6, // Variable
-    detail: 'Quote variable',
-    insertText: '$quote'
+    detail: 'CardAuthorizationRequest variable',
+    insertText: '$request'
   })
   
   // Always provide field suggestions

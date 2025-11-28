@@ -1,6 +1,6 @@
 package com.intuit.drools;
 
-import com.example.model.Quote;
+import com.example.model.CardAuthorizationRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.kie.api.KieServices;
 import org.kie.api.builder.KieBuilder;
@@ -42,14 +42,15 @@ public class DroolsExecutor {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         List<String> firedRules = new ArrayList<>();
-        Quote quote = null;
+        CardAuthorizationRequest request = null;
 
         try {
             // Parse fact JSON
             System.out.println("[Drools Executor] Parsing fact JSON...");
-            quote = mapper.readValue(factJson, Quote.class);
-            System.out.println("[Drools Executor] Fact parsed: loyalCustomer=" + quote.isLoyalCustomer() + 
-                             ", premium=" + quote.getPremium() + ", discount=" + quote.getDiscount());
+            request = mapper.readValue(factJson, CardAuthorizationRequest.class);
+            System.out.println("[Drools Executor] Fact parsed: transactionId=" + request.getTransactionId() + 
+                             ", amount=" + request.getAmount() + ", merchantCountry=" + request.getMerchantCountry() +
+                             ", isRooted=" + request.isRooted() + ", isEmulator=" + request.isEmulator());
         } catch (Exception e) {
             errors.add("Failed to parse fact JSON: " + e.getMessage());
             result.errors = errors;
@@ -99,7 +100,7 @@ public class DroolsExecutor {
 
             // Insert fact
             System.out.println("[Drools Executor] Inserting fact into working memory...");
-            kieSession.insert(quote);
+            kieSession.insert(request);
 
             // Fire rules
             System.out.println("[Drools Executor] Firing all rules...");
@@ -107,12 +108,13 @@ public class DroolsExecutor {
             System.out.println("[Drools Executor] Rules execution complete. Fired " + fired + " rule(s).");
             firedRules.add("Fired " + fired + " rule(s)");
 
-            // Get updated quote state
-            result.factAfter = mapper.writeValueAsString(quote);
+            // Get updated request state
+            result.factAfter = mapper.writeValueAsString(request);
             result.firedCount = fired;
             
-            System.out.println("[Drools Executor] Final fact state: discount=" + quote.getDiscount() + 
-                             ", requiresReview=" + quote.isRequiresReview());
+            System.out.println("[Drools Executor] Final fact state: isAuthorized=" + request.isAuthorized() + 
+                             ", riskScore=" + request.getRiskScore() + ", requiresManualReview=" + 
+                             request.isRequiresManualReview() + ", declineReason=" + request.getDeclineReason());
 
             kieSession.dispose();
             System.out.println("[Drools Executor] Session disposed. Execution successful.");

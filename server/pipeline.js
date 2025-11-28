@@ -50,8 +50,8 @@ export async function analyzeDrl(content, factPath) {
       warnings.push('Missing package declaration')
     }
 
-    if (!/import\s+.+Quote/i.test(content)) {
-      warnings.push('Fact import for Quote not found; update imports when changing fact types.')
+    if (!/import\s+.+CardAuthorizationRequest/i.test(content)) {
+      warnings.push('Fact import for CardAuthorizationRequest not found; update imports when changing fact types.')
     }
 
     const durationMs = Math.round(performance.now() - start)
@@ -143,25 +143,25 @@ export async function runRuleTests(content, factPath, testDocPath) {
     const factText = await fs.readFile(factPath, 'utf-8')
     const fact = JSON.parse(factText)
 
-    const loyaltyCase = content.includes('loyalCustomer')
+    const crimeaBlockCase = /Crimea|merchantRegion\s*==\s*"Crimea"/i.test(content)
     cases.push({
-      name: 'Loyalty discount',
-      status: loyaltyCase ? 'passed' : 'failed',
-      details: loyaltyCase
-        ? `applies 10% when loyalCustomer=true (example premium ${fact.premium})`
-        : 'No loyalty rule found'
+      name: 'Crimea geolocation block',
+      status: crimeaBlockCase ? 'passed' : 'failed',
+      details: crimeaBlockCase
+        ? 'blocks transactions from Crimea region'
+        : 'Rule missing Crimea geolocation blocking'
     })
-    if (!loyaltyCase) status = 'failed'
-
-    const premiumCase = /premium\s*>\s*1000/.test(content)
+    if (!crimeaBlockCase) status = 'failed'
+    
+    const deviceRiskCase = /isRooted|isEmulator|deviceType/i.test(content)
     cases.push({
-      name: 'High premium flag',
-      status: premiumCase ? 'passed' : 'failed',
-      details: premiumCase
-        ? 'flags quotes requiring review'
-        : 'Rule missing premium threshold > 1000'
+      name: 'Device profile risk assessment',
+      status: deviceRiskCase ? 'passed' : 'failed',
+      details: deviceRiskCase
+        ? 'includes device profile risk assessment'
+        : 'Rule missing device profile checks'
     })
-    if (!premiumCase) status = 'failed'
+    if (!deviceRiskCase) status = 'failed'
 
     const docExists = await fileExists(testDocPath)
     const summary = docExists

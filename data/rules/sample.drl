@@ -1,20 +1,132 @@
-package com.example.pricing
+package com.example.compliance
 
-import com.example.model.Quote
+import com.example.model.CardAuthorizationRequest
 
-rule "Apply loyalty discount"
+// Compliance Rule: Block transactions from restricted geolocations (Crimea, etc.)
+rule "Block restricted geolocations - Crimea"
 when
-    $quote : Quote(loyalCustomer == true)
+    $request : CardAuthorizationRequest(
+        merchantCountry == "UA" && merchantRegion == "Crimea" || 
+        merchantCountry == "RU" && merchantRegion == "Crimea" ||
+        merchantCity == "Sevastopol" || merchantCity == "Simferopol"
+    )
 then
-    $quote.setDiscount(0.1);
-    System.out.println("Loyalty discount applied");
+    $request.setAuthorized(false);
+    $request.setDeclineReason("Transaction declined: Restricted geolocation (Crimea)");
+    $request.setRiskScore(100);
+    $request.setHighRiskTransaction(true);
+    System.out.println("COMPLIANCE ALERT: Transaction blocked from restricted geolocation - Crimea");
 end
 
-rule "Flag high premium greater than 1000"
+// Compliance Rule: Block transactions from other restricted regions
+rule "Block restricted geolocations - North Korea"
 when
-    $quote : Quote(premium > 1000)
+    $request : CardAuthorizationRequest(merchantCountry == "KP")
 then
-    $quote.setRequiresReview(true);
-    System.out.println("Quote requires manual review");
+    $request.setAuthorized(false);
+    $request.setDeclineReason("Transaction declined: Restricted geolocation (North Korea)");
+    $request.setRiskScore(100);
+    $request.setHighRiskTransaction(true);
+    System.out.println("COMPLIANCE ALERT: Transaction blocked from restricted geolocation - North Korea");
 end
 
+// Compliance Rule: High risk device profile detection
+rule "Flag rooted or jailbroken devices"
+when
+    $request : CardAuthorizationRequest(rooted == true)
+then
+    $request.setRiskScore($request.getRiskScore() + 30);
+    $request.setRequiresManualReview(true);
+    System.out.println("SECURITY ALERT: Transaction from rooted/jailbroken device detected");
+end
+
+// Compliance Rule: Emulator detection
+rule "Flag emulator devices"
+when
+    $request : CardAuthorizationRequest(emulator == true)
+then
+    $request.setRiskScore($request.getRiskScore() + 25);
+    $request.setRequiresManualReview(true);
+    System.out.println("SECURITY ALERT: Transaction from emulator device detected");
+end
+
+// Compliance Rule: High risk device combination
+rule "Flag high risk device profile"
+when
+    $request : CardAuthorizationRequest(
+        rooted == true && emulator == true
+    )
+then
+    $request.setAuthorized(false);
+    $request.setDeclineReason("Transaction declined: High risk device profile (rooted + emulator)");
+    $request.setRiskScore(100);
+    $request.setHighRiskTransaction(true);
+    System.out.println("COMPLIANCE ALERT: Transaction blocked - High risk device profile combination");
+end
+
+// Compliance Rule: Large transaction amount threshold
+rule "Require manual review for large transactions"
+when
+    $request : CardAuthorizationRequest(
+        amount > 10000.0,
+        currency == "USD"
+    )
+then
+    $request.setRiskScore($request.getRiskScore() + 20);
+    $request.setRequiresManualReview(true);
+    System.out.println("COMPLIANCE ALERT: Large transaction amount requires manual review");
+end
+
+// Compliance Rule: High risk merchant category
+rule "Flag high risk merchant categories"
+when
+    $request : CardAuthorizationRequest(
+        merchantCategory == "GAMBLING" || 
+        merchantCategory == "ADULT_CONTENT" ||
+        merchantCategory == "CRYPTO_CURRENCY"
+    )
+then
+    $request.setRiskScore($request.getRiskScore() + 15);
+    $request.setRequiresManualReview(true);
+    System.out.println("COMPLIANCE ALERT: High risk merchant category detected");
+end
+
+// Compliance Rule: Cross-border transaction risk
+rule "Flag high risk cross-border transactions"
+when
+    $request : CardAuthorizationRequest(
+        issuerCountry != merchantCountry,
+        amount > 5000.0
+    )
+then
+    $request.setRiskScore($request.getRiskScore() + 25);
+    $request.setRequiresManualReview(true);
+    System.out.println("COMPLIANCE ALERT: High value cross-border transaction requires review");
+end
+
+// Compliance Rule: Auto-authorize low risk transactions
+rule "Auto-authorize low risk transactions"
+when
+    $request : CardAuthorizationRequest(
+        riskScore < 30,
+        authorized == false,
+        highRiskTransaction == false
+    )
+then
+    $request.setAuthorized(true);
+    System.out.println("Transaction authorized: Low risk profile");
+end
+
+// Compliance Rule: Decline high risk transactions
+rule "Decline high risk transactions"
+when
+    $request : CardAuthorizationRequest(
+        riskScore >= 70,
+        authorized == false
+    )
+then
+    $request.setAuthorized(false);
+    $request.setDeclineReason("Transaction declined: High risk score (" + $request.getRiskScore() + ")");
+    $request.setHighRiskTransaction(true);
+    System.out.println("COMPLIANCE ALERT: Transaction declined due to high risk score");
+end

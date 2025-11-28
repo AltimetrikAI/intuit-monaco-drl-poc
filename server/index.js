@@ -11,7 +11,7 @@ import { startLSPServer } from './lsp-server.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const RULE_PATH = path.resolve(__dirname, '../data/rules/sample.drl')
-const FACT_PATH = path.resolve(__dirname, '../data/facts/quote.json')
+const FACT_PATH = path.resolve(__dirname, '../data/facts/card-authorization.json')
 const TEST_DOC_PATH = path.resolve(__dirname, '../data/tests/bdd-tests.md')
 
 const app = express()
