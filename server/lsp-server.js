@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws'
+import { generateRuleWithLLM } from './llm-rule-creation-handler.js'
 
 // Session storage: map WebSocket to context
 const sessions = new Map()
@@ -19,17 +20,11 @@ const ruleTemplates = [
     
     // Rule content
     ruleContent: `rule "Flag high premium greater than 500"
-
 when
-
     $quote : Quote(premium > 500)
-
 then
-
     $quote.setRequiresReview(true);
-
     System.out.println("Quote requires case review");
-
 end`,
     
     // Completion item settings
@@ -276,22 +271,31 @@ function extractCurrentWord(text) {
 
 /**
  * Handler for CREATE mode (generate new rule)
- * Returns mock completions - ready for LLM integration
+ * Uses LLM to generate DRL rules
  */
-function handleCreateRequest(session, userPrompt, position, documentContent) {
-  console.log(`[LSP] 📝 CREATE HANDLER:`)
-  if (userPrompt) {
-    console.log(`[LSP]   - Generate prompt: "${userPrompt}"`)
-    console.log(`[LSP]   (Note: Currently using mock response, ready for LLM integration)`)
+async function handleCreateRequest(session, userPrompt, position, documentContent) {
+  try {
+    const result = await generateRuleWithLLM(
+      userPrompt || 'Generate a DRL rule',
+      documentContent,
+      session.factObject || {},
+      session.factSchema || {}
+    )
+    
+    return [{
+      label: 'Generated DRL Rule',
+      kind: 14, // Snippet
+      detail: result.reasoning,
+      insertText: result.drl,
+      insertTextRules: 4, // Snippet mode
+      documentation: {
+        value: `**Reasoning:**\n${result.reasoning}\n\n**Generated DRL:**\n\`\`\`drl\n${result.drl}\n\`\`\``
+      }
+    }]
+  } catch (error) {
+    console.error(`[LSP] ❌ Rule creation failed:`, error.message)
+    return buildCompletionsFromTemplates()
   }
-  
-  // TODO: Replace with LLM call
-  // const completions = await callLLMForRuleGeneration(userPrompt, session)
-  
-  // Mock response - build from templates
-  const completions = buildCompletionsFromTemplates()
-  
-  return completions
 }
 
 /**
@@ -299,12 +303,110 @@ function handleCreateRequest(session, userPrompt, position, documentContent) {
  * Returns mock modified rule - ready for LLM integration
  */
 function handleModifyRequest(session, userPrompt, existingRule, position, documentContent) {
-  console.log(`[LSP] 📝 MODIFY HANDLER:`)
-  console.log(`[LSP]   - Modify prompt: "${userPrompt}"`)
-  console.log(`[LSP]   - Existing rule length: ${existingRule ? existingRule.length : 0} chars`)
+  console.log(`[LSP] ========================================`)
+  console.log(`[LSP] 📝 MODIFY HANDLER - INPUTS & CONTEXT`)
+  console.log(`[LSP] ========================================`)
+  
+  // Log direct inputs (parameters)
+  console.log(`[LSP] 📥 DIRECT INPUTS (Parameters):`)
+  console.log(`[LSP]   - userPrompt: "${userPrompt || 'N/A'}"`)
+  console.log(`[LSP]   - existingRule length: ${existingRule ? existingRule.length : 0} chars`)
   if (existingRule) {
-    console.log(`[LSP]   - Existing rule preview: ${existingRule.substring(0, 100)}...`)
+    console.log(`[LSP]   - existingRule full text:`)
+    console.log(`[LSP]     ${existingRule.split('\n').map((line, idx) => `${idx + 1}: ${line}`).join('\n     ')}`)
+  } else {
+    console.log(`[LSP]   - existingRule: N/A (not provided)`)
   }
+  console.log(`[LSP]   - position: Line ${position.line + 1}, Column ${position.character + 1} (0-based: ${position.line}, ${position.character})`)
+  console.log(`[LSP]   - documentContent length: ${documentContent.length} chars`)
+  console.log(`[LSP]   - documentContent preview: "${documentContent.substring(0, 200)}${documentContent.length > 200 ? '...' : ''}"`)
+  
+  // Log session context (available via session object)
+  console.log(`[LSP] 📋 SESSION CONTEXT (Available via session):`)
+  console.log(`[LSP]   - session.initialized: ${session.initialized}`)
+  
+  // Fact Object - concise summary
+  if (session.factObject && Object.keys(session.factObject).length > 0) {
+    console.log(`[LSP]   - session.factObject: ${Object.keys(session.factObject).length} field(s)`)
+    Object.keys(session.factObject).forEach(key => {
+      const type = session.factSchema?.[key] || typeof session.factObject[key]
+      const value = session.factObject[key]
+      const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value)
+      const preview = valueStr.length > 50 ? valueStr.substring(0, 50) + '...' : valueStr
+      console.log(`[LSP]     • ${key} (${type}): ${preview}`)
+    })
+  } else {
+    console.log(`[LSP]   - session.factObject: N/A or empty`)
+  }
+  
+  // Fact Schema - concise summary
+  if (session.factSchema && Object.keys(session.factSchema).length > 0) {
+    console.log(`[LSP]   - session.factSchema: ${Object.keys(session.factSchema).length} field(s)`)
+    Object.keys(session.factSchema).forEach(key => {
+      console.log(`[LSP]     • ${key}: ${session.factSchema[key]}`)
+    })
+  } else {
+    console.log(`[LSP]   - session.factSchema: N/A or empty`)
+  }
+  
+  // BDD Tests - concise summary
+  if (session.bddTests && session.bddTests.trim().length > 0) {
+    const bddLines = session.bddTests.split('\n')
+    console.log(`[LSP]   - session.bddTests: ${bddLines.length} line(s), ${session.bddTests.length} chars`)
+    console.log(`[LSP]     Preview (first 3 lines):`)
+    bddLines.slice(0, 3).forEach((line, idx) => {
+      if (line.trim()) {
+        console.log(`[LSP]       ${idx + 1}: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
+      }
+    })
+    if (bddLines.length > 3) {
+      console.log(`[LSP]       ... (${bddLines.length - 3} more lines)`)
+    }
+  } else {
+    console.log(`[LSP]   - session.bddTests: N/A or empty`)
+  }
+  
+  // Document Content - concise summary
+  console.log(`[LSP]   - session.documentContent: ${(session.documentContent || '').length} chars`)
+  if (session.documentContent && session.documentContent.length > 0) {
+    const drlLines = session.documentContent.split('\n')
+    console.log(`[LSP]     Preview (first 5 lines):`)
+    drlLines.slice(0, 5).forEach((line, idx) => {
+      console.log(`[LSP]       ${idx + 1}: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
+    })
+    if (drlLines.length > 5) {
+      console.log(`[LSP]       ... (${drlLines.length - 5} more lines)`)
+    }
+  }
+  
+  // Log derived context
+  console.log(`[LSP] 🔍 DERIVED CONTEXT (Can be extracted):`)
+  const factFields = getFactFields(session)
+  console.log(`[LSP]   - Fact fields count: ${factFields.length}`)
+  factFields.forEach((field, idx) => {
+    console.log(`[LSP]     Field ${idx + 1}: ${field.name} (${field.type})`)
+  })
+  
+  const lines = documentContent.split('\n')
+  const currentLine = lines[position.line] || ''
+  const beforeCursor = currentLine.substring(0, position.character)
+  const afterCursor = currentLine.substring(position.character)
+  console.log(`[LSP]   - Current line: "${currentLine}"`)
+  console.log(`[LSP]   - Before cursor: "${beforeCursor}"`)
+  console.log(`[LSP]   - After cursor: "${afterCursor}"`)
+  
+  // Extract rule context from existingRule
+  if (existingRule) {
+    const ruleNameMatch = existingRule.match(/rule\s+"([^"]+)"/i)
+    const ruleName = ruleNameMatch ? ruleNameMatch[1] : 'Unknown'
+    console.log(`[LSP]   - Rule being modified: "${ruleName}"`)
+    console.log(`[LSP]   - Rule structure: ${existingRule.includes('when') ? 'Has when clause' : 'No when clause'}, ${existingRule.includes('then') ? 'Has then clause' : 'No then clause'}`)
+  }
+  
+  console.log(`[LSP] 💡 READY FOR LLM INTEGRATION:`)
+  console.log(`[LSP]   - All context available: userPrompt, existingRule, factObject, factSchema, bddTests, documentContent, position`)
+  console.log(`[LSP]   - TODO: Replace buildMockModifiedRule() with LLM call`)
+  console.log(`[LSP] ========================================`)
   
   // TODO: Replace with LLM call
   // const completions = await callLLMForRuleModification(userPrompt, existingRule, session)
@@ -331,24 +433,124 @@ function handleModifyRequest(session, userPrompt, existingRule, position, docume
  * Always returns completions regardless of what user types - ready for LLM integration
  */
 function handleCompletionRequest(session, position, documentContent) {
-  console.log(`[LSP] 💡 COMPLETION HANDLER:`)
-  console.log(`[LSP]   - Always providing completions (no conditional checks)`)
+  console.log(`[LSP] ========================================`)
+  console.log(`[LSP] 💡 COMPLETION HANDLER - INPUTS & CONTEXT`)
+  console.log(`[LSP] ========================================`)
   
+  // Log direct inputs (parameters)
+  console.log(`[LSP] 📥 DIRECT INPUTS (Parameters):`)
+  console.log(`[LSP]   - position: Line ${position.line + 1}, Column ${position.character + 1} (0-based: ${position.line}, ${position.character})`)
+  console.log(`[LSP]   - documentContent length: ${documentContent.length} chars`)
+  console.log(`[LSP]   - documentContent preview: "${documentContent.substring(0, 200)}${documentContent.length > 200 ? '...' : ''}"`)
+  
+  // Log session context (available via session object)
+  console.log(`[LSP] 📋 SESSION CONTEXT (Available via session):`)
+  console.log(`[LSP]   - session.initialized: ${session.initialized}`)
+  
+  // Fact Object - concise summary
+  if (session.factObject && Object.keys(session.factObject).length > 0) {
+    console.log(`[LSP]   - session.factObject: ${Object.keys(session.factObject).length} field(s)`)
+    Object.keys(session.factObject).forEach(key => {
+      const type = session.factSchema?.[key] || typeof session.factObject[key]
+      const value = session.factObject[key]
+      const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value)
+      const preview = valueStr.length > 50 ? valueStr.substring(0, 50) + '...' : valueStr
+      console.log(`[LSP]     • ${key} (${type}): ${preview}`)
+    })
+  } else {
+    console.log(`[LSP]   - session.factObject: N/A or empty`)
+  }
+  
+  // Fact Schema - concise summary
+  if (session.factSchema && Object.keys(session.factSchema).length > 0) {
+    console.log(`[LSP]   - session.factSchema: ${Object.keys(session.factSchema).length} field(s)`)
+    Object.keys(session.factSchema).forEach(key => {
+      console.log(`[LSP]     • ${key}: ${session.factSchema[key]}`)
+    })
+  } else {
+    console.log(`[LSP]   - session.factSchema: N/A or empty`)
+  }
+  
+  // BDD Tests - concise summary
+  if (session.bddTests && session.bddTests.trim().length > 0) {
+    const bddLines = session.bddTests.split('\n')
+    console.log(`[LSP]   - session.bddTests: ${bddLines.length} line(s), ${session.bddTests.length} chars`)
+    console.log(`[LSP]     Preview (first 3 lines):`)
+    bddLines.slice(0, 3).forEach((line, idx) => {
+      if (line.trim()) {
+        console.log(`[LSP]       ${idx + 1}: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
+      }
+    })
+    if (bddLines.length > 3) {
+      console.log(`[LSP]       ... (${bddLines.length - 3} more lines)`)
+    }
+  } else {
+    console.log(`[LSP]   - session.bddTests: N/A or empty`)
+  }
+  
+  // Document Content - concise summary
+  console.log(`[LSP]   - session.documentContent: ${(session.documentContent || '').length} chars`)
+  if (session.documentContent && session.documentContent.length > 0) {
+    const drlLines = session.documentContent.split('\n')
+    console.log(`[LSP]     Preview (first 5 lines):`)
+    drlLines.slice(0, 5).forEach((line, idx) => {
+      console.log(`[LSP]       ${idx + 1}: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
+    })
+    if (drlLines.length > 5) {
+      console.log(`[LSP]       ... (${drlLines.length - 5} more lines)`)
+    }
+  }
+  
+  // Log derived context
+  console.log(`[LSP] 🔍 DERIVED CONTEXT (Can be extracted):`)
   const lines = documentContent.split('\n')
   const currentLine = lines[position.line] || ''
   const beforeCursor = currentLine.substring(0, position.character)
   const afterCursor = currentLine.substring(position.character)
-  
+  console.log(`[LSP]   - Current line: "${currentLine}"`)
   console.log(`[LSP]   - Before cursor: "${beforeCursor}"`)
   console.log(`[LSP]   - After cursor: "${afterCursor}"`)
-  console.log(`[LSP]   - Full line: "${currentLine}"`)
+  console.log(`[LSP]   - Total lines in document: ${lines.length}`)
+  console.log(`[LSP]   - Current line number: ${position.line + 1}`)
+  
+  // Extract context around cursor (surrounding lines) - limit to avoid long logs
+  const contextLines = 2 // Reduced from 3 to 2
+  const startLine = Math.max(0, position.line - contextLines)
+  const endLine = Math.min(lines.length - 1, position.line + contextLines)
+  const contextAroundCursor = lines.slice(startLine, endLine + 1)
+  console.log(`[LSP]   - Context around cursor (±${contextLines} lines, ${contextAroundCursor.length} lines):`)
+  contextAroundCursor.forEach((line, idx) => {
+    const lineNum = startLine + idx + 1
+    const isCurrentLine = (startLine + idx) === position.line
+    const marker = isCurrentLine ? '>>>' : '   '
+    console.log(`[LSP]     ${marker} ${lineNum}: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
+  })
+  
+  const factFields = getFactFields(session)
+  console.log(`[LSP]   - Fact fields count: ${factFields.length}`)
+  if (factFields.length > 0) {
+    factFields.slice(0, 5).forEach((field, idx) => {
+      console.log(`[LSP]     Field ${idx + 1}: ${field.name} (${field.type})`)
+    })
+    if (factFields.length > 5) {
+      console.log(`[LSP]     ... (${factFields.length - 5} more fields)`)
+    }
+  }
+  
+  // Detect what user is typing
+  const currentWord = beforeCursor.trim().split(/\s+/).pop() || ''
+  console.log(`[LSP]   - Current word being typed: "${currentWord}"`)
+  
+  console.log(`[LSP] 💡 READY FOR LLM INTEGRATION:`)
+  console.log(`[LSP]   - All context available: documentContent, position, factObject, factSchema, bddTests, beforeCursor, afterCursor, contextAroundCursor`)
+  console.log(`[LSP]   - TODO: Replace mock completions with LLM call`)
+  console.log(`[LSP] ========================================`)
   
   // TODO: Replace with LLM call
   // const completions = await callLLMForInlineCompletion(beforeCursor, afterCursor, documentContent, session)
   
   // Mock response - always provide suggestions
   const completions = []
-  const factFields = getFactFields(session)
   
   // Always provide rule template suggestion
   completions.push({
@@ -433,7 +635,7 @@ export function startLSPServer(port = 4001) {
     })
     
     // Handle messages
-    ws.on('message', (data) => {
+    ws.on('message', async (data) => {
       try {
         const message = JSON.parse(data.toString())
         const session = sessions.get(ws)
@@ -467,7 +669,11 @@ export function startLSPServer(port = 4001) {
             const newContent = message.params.contentChanges[0].text
             const oldLength = session.documentContent.length
             session.documentContent = newContent
-            console.log(`[LSP] 📝 Document updated: ${oldLength} → ${newContent.length} chars`)
+            // Only log if there's a significant change (more than 10 chars difference) to reduce noise
+            const changeSize = Math.abs(newContent.length - oldLength)
+            if (changeSize > 10) {
+              console.log(`[LSP] 📝 Document updated: ${oldLength} → ${newContent.length} chars (${changeSize > 0 ? '+' : ''}${changeSize})`)
+            }
           }
           return
         }
@@ -554,7 +760,7 @@ export function startLSPServer(port = 4001) {
             console.log(`[LSP]   - Request ID: ${message.id}`)
             console.log(`[LSP]   - Position: Line ${line}, Column ${char}`)
             
-            completions = handleCreateRequest(session, userPrompt, position, documentContent)
+            completions = await handleCreateRequest(session, userPrompt, position, documentContent)
           }
           
           // Send response (common for all modes)

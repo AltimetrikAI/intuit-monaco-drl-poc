@@ -257,41 +257,27 @@ export async function initializeLSP(
           console.log('[LSP Client] ✅ RETURNING LSP SUGGESTIONS')
           console.log('[LSP Client] ----------------------------------------')
           console.log('[LSP Client] Total suggestions:', pendingSuggestions.length)
-          pendingSuggestions.forEach((sug, idx) => {
-            const label = typeof sug.label === 'string' ? sug.label : sug.label.label
-            console.log(`[LSP Client]   Suggestion ${idx + 1}:`)
-            console.log(`[LSP Client]     - Label: "${label}"`)
-            console.log(`[LSP Client]     - Kind: ${sug.kind} (${getCompletionKindName(sug.kind)})`)
-            console.log(`[LSP Client]     - Detail: "${sug.detail || 'N/A'}"`)
-            console.log(`[LSP Client]     - Insert Text Length: ${sug.insertText ? sug.insertText.length : 0} chars`)
-            if (sug.insertText) {
-              const preview = sug.insertText.substring(0, 100)
-              console.log(`[LSP Client]     - Insert Text Preview: "${preview}${sug.insertText.length > 100 ? '...' : ''}"`)
-            }
-            if (sug.documentation) {
-              const doc = typeof sug.documentation === 'string' ? sug.documentation : (sug.documentation as any)?.value || ''
-              console.log(`[LSP Client]     - Documentation: "${doc.substring(0, 80)}${doc.length > 80 ? '...' : ''}"`)
-            }
-          })
-          console.log('[LSP Client] ========================================')
           const suggestions = [...pendingSuggestions] // Copy array
           pendingSuggestions = null // Clear after returning
           return { suggestions }
         }
         
+        // If manually triggered (button/right-click), wait for LLM response
+        if (context.triggerKind === monaco.languages.CompletionTriggerKind.Invoke) {
+          console.log('[LSP Client] ⏳ Waiting for LLM response...')
+          return new Promise<Monaco.languages.ProviderResult<Monaco.languages.CompletionList>>((resolve) => {
+            sendCompletionRequestPromise(editor, model, position, resolve)
+          })
+        }
+        
         // If auto-completion is enabled, request inline suggestions during typing
-        if (autoCompletionEnabled && (context.triggerKind === monaco.languages.CompletionTriggerKind.Invoke || 
-            context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter)) {
-          console.log('[LSP Client] 🔄 Auto-completion enabled - requesting inline suggestions')
-          
-          // Return a promise that resolves with suggestions from server
+        if (autoCompletionEnabled && context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter) {
           return new Promise<Monaco.languages.ProviderResult<Monaco.languages.CompletionList>>((resolve) => {
             sendInlineCompletionRequestPromise(editor, model, position, resolve)
           })
         }
         
-        // During normal typing (not button/right-click), return empty
-        // This allows normal Java suggestions to work
+        // During normal typing, return empty
         return { suggestions: [] }
       },
       // Trigger characters for auto-completion when enabled
@@ -632,6 +618,73 @@ export function sendDocumentContent(content: string): void {
  * @param editor - Editor instance
  * @param userPrompt - Optional user prompt for rule generation
  */
+function sendCompletionRequestPromise(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  model: Monaco.editor.ITextModel,
+  position: Monaco.Position,
+  resolve: (result: Monaco.languages.ProviderResult<Monaco.languages.CompletionList>) => void
+): void {
+  const monaco = getMonaco()
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.error('[LSP Client] ❌ WebSocket not ready!')
+    resolve({ suggestions: [] })
+    return
+  }
+
+  const requestId = Date.now()
+    const timeout = setTimeout(() => {
+      ws!.removeEventListener('message', handler)
+      console.error('[LSP Client] ⏱️  Request timeout after 45 seconds')
+      resolve({ suggestions: [] })
+    }, 45000)
+
+  const handler = (event: MessageEvent) => {
+    try {
+      const message = JSON.parse(event.data)
+      if (message.id === requestId && message.result) {
+        clearTimeout(timeout)
+        ws!.removeEventListener('message', handler)
+        const items = message.result?.items || []
+        const suggestions = items.map((item: any) => ({
+          label: item.label,
+          kind: item.kind || monaco.languages.CompletionItemKind.Text,
+          detail: item.detail,
+          insertText: item.insertText || item.label,
+          insertTextRules: item.insertTextRules,
+          documentation: item.documentation,
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn: position.column,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column
+          }
+        }))
+        resolve({ suggestions })
+      }
+    } catch (e) {
+      clearTimeout(timeout)
+      ws!.removeEventListener('message', handler)
+      resolve({ suggestions: [] })
+    }
+  }
+
+  ws.addEventListener('message', handler)
+  
+  const message = {
+    jsonrpc: '2.0',
+    id: requestId,
+    method: 'textDocument/completion',
+    params: {
+      textDocument: { uri: model.uri.toString() },
+      position: { line: position.lineNumber - 1, character: position.column - 1 },
+      mode: 'generate',
+      userPrompt: undefined
+    }
+  }
+  ws.send(JSON.stringify(message))
+}
+
 function sendCompletionRequest(editor: Monaco.editor.IStandaloneCodeEditor, userPrompt?: string): void {
   const monaco = getMonaco()
   console.log('[LSP Client] ========================================')
@@ -665,6 +718,14 @@ function sendCompletionRequest(editor: Monaco.editor.IStandaloneCodeEditor, user
   console.log('[LSP Client]   - Model URI:', model.uri.toString())
   console.log('[LSP Client]   - Model language:', model.getLanguageId())
 
+  // Set up timeout handler (45 seconds for LLM responses)
+  const timeout = setTimeout(() => {
+    ws!.removeEventListener('message', handler)
+    console.error('[LSP Client] ⏱️  Request timeout after 45 seconds')
+    console.error('[LSP Client]   - Request ID:', requestId)
+    console.error('[LSP Client]   - This may happen if LLM takes too long to respond')
+  }, 45000)
+
   // Set up response handler
   const handler = (event: MessageEvent) => {
     try {
@@ -676,6 +737,7 @@ function sendCompletionRequest(editor: Monaco.editor.IStandaloneCodeEditor, user
       }
       
       if (message.id === requestId && message.result) {
+        clearTimeout(timeout)
         ws!.removeEventListener('message', handler)
         console.log('[LSP Client] ========================================')
         console.log('[LSP Client] ✅ STEP 2: RECEIVED RESPONSE FROM SERVER')
@@ -724,12 +786,27 @@ function sendCompletionRequest(editor: Monaco.editor.IStandaloneCodeEditor, user
           
           pendingSuggestions = suggestions
           
+          // Trigger Monaco's completion UI to show the suggestions
+          console.log('[LSP Client] ========================================')
+          console.log('[LSP Client] ✅ STEP 4: TRIGGERING MONACO COMPLETION UI')
+          console.log('[LSP Client] ----------------------------------------')
+          console.log('[LSP Client]   - pendingSuggestions set:', suggestions.length, 'items')
+          
+          // Use setTimeout to ensure suggestions are set before triggering
+          setTimeout(() => {
+            try {
+              console.log('[LSP Client]   - Triggering editor.action.triggerSuggest...')
+              editor.trigger('lsp', 'editor.action.triggerSuggest', {})
+              console.log('[LSP Client]   ✅ Successfully triggered completion UI')
+            } catch (error) {
+              console.error('[LSP Client]   ❌ Error triggering completion UI:', error)
+            }
+          }, 50)
+          
           // Notify UI component that suggestions are ready (for custom dropdown)
           if (onSuggestionsReady) {
             console.log('[LSP Client]   - Notifying UI component to show custom dropdown')
             onSuggestionsReady(suggestions)
-          } else {
-            console.log('[LSP Client]   ⚠️  No callback registered - suggestions stored but not displayed')
           }
           
           console.log('[LSP Client] ========================================')
@@ -739,6 +816,7 @@ function sendCompletionRequest(editor: Monaco.editor.IStandaloneCodeEditor, user
         }
       }
     } catch (e) {
+      clearTimeout(timeout)
       console.error('[LSP Client] Parse error:', e)
       ws!.removeEventListener('message', handler)
     }
