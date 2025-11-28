@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { generateRuleWithLLM } from './llm-rule-creation-handler.js'
+import { modifyRuleWithLLM } from './llm-rule-updation-handler.js'
 
 // Session storage: map WebSocket to context
 const sessions = new Map()
@@ -300,9 +301,9 @@ async function handleCreateRequest(session, userPrompt, position, documentConten
 
 /**
  * Handler for MODIFY mode (update existing rule)
- * Returns mock modified rule - ready for LLM integration
+ * Uses LLM to modify existing rules
  */
-function handleModifyRequest(session, userPrompt, existingRule, position, documentContent) {
+async function handleModifyRequest(session, userPrompt, existingRule, position, documentContent) {
   console.log(`[LSP] ========================================`)
   console.log(`[LSP] 📝 MODIFY HANDLER - INPUTS & CONTEXT`)
   console.log(`[LSP] ========================================`)
@@ -403,29 +404,45 @@ function handleModifyRequest(session, userPrompt, existingRule, position, docume
     console.log(`[LSP]   - Rule structure: ${existingRule.includes('when') ? 'Has when clause' : 'No when clause'}, ${existingRule.includes('then') ? 'Has then clause' : 'No then clause'}`)
   }
   
-  console.log(`[LSP] 💡 READY FOR LLM INTEGRATION:`)
-  console.log(`[LSP]   - All context available: userPrompt, existingRule, factObject, factSchema, bddTests, documentContent, position`)
-  console.log(`[LSP]   - TODO: Replace buildMockModifiedRule() with LLM call`)
   console.log(`[LSP] ========================================`)
   
-  // TODO: Replace with LLM call
-  // const completions = await callLLMForRuleModification(userPrompt, existingRule, session)
-  
-  // Mock response - use buildMockModifiedRule
-  const { ruleText: mockModifiedRule } = buildMockModifiedRule(existingRule, userPrompt)
-  
-  const completions = [{
-    label: 'Modified Rule',
-    kind: 14, // Snippet
-    detail: 'Modified DRL Rule',
-    insertText: mockModifiedRule,
-    insertTextRules: 4, // Snippet mode
-    documentation: {
-      value: `Modified rule based on: ${userPrompt || 'user request'}`
-    }
-  }]
-  
-  return completions
+  // Call LLM to modify the rule
+  try {
+    const { drl: modifiedRule, reasoning } = await modifyRuleWithLLM(
+      userPrompt,
+      existingRule,
+      documentContent,
+      session.factObject || {},
+      session.factSchema || {}
+    )
+    
+    const completions = [{
+      label: 'Modified Rule',
+      kind: 14, // Snippet
+      detail: 'Modified DRL Rule',
+      insertText: modifiedRule,
+      insertTextRules: 4, // Snippet mode
+      documentation: {
+        value: `Modified rule based on: ${userPrompt || 'user request'}\n\nReasoning: ${reasoning}`
+      }
+    }]
+    
+    return completions
+  } catch (error) {
+    console.error(`[LSP] ❌ Error in LLM rule modification:`, error)
+    // Fallback to mock response on error
+    const { ruleText: mockModifiedRule } = buildMockModifiedRule(existingRule, userPrompt)
+    return [{
+      label: 'Modified Rule (Fallback)',
+      kind: 14,
+      detail: 'Modified DRL Rule (Mock)',
+      insertText: mockModifiedRule,
+      insertTextRules: 4,
+      documentation: {
+        value: `Modified rule based on: ${userPrompt || 'user request'} (Fallback due to LLM error)`
+      }
+    }]
+  }
 }
 
 /**
@@ -750,7 +767,7 @@ export function startLSPServer(port = 4001) {
             console.log(`[LSP]   - Request ID: ${message.id}`)
             console.log(`[LSP]   - Position: Line ${line}, Column ${char}`)
             
-            completions = handleModifyRequest(session, userPrompt, existingRule, position, documentContent)
+            completions = await handleModifyRequest(session, userPrompt, existingRule, position, documentContent)
             
           } else {
             // GENERATE mode (default)
