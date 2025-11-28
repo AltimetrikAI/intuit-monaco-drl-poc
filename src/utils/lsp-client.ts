@@ -14,6 +14,7 @@ let autoCompletionEnabled = false // Track if auto-completion is enabled
 let onAutoCompletionToggle: ((enabled: boolean) => void) | null = null // Callback for UI updates
 let contextMenuActionsRegistered = false // Track if context menu actions are already registered
 let toggleActionDisposable: Monaco.IDisposable | null = null // Store reference to toggle action for cleanup
+let registeredEditorInstance: Monaco.editor.IStandaloneCodeEditor | null = null // Track which editor instance has actions registered
 let monacoInstance: typeof import('monaco-editor') | null = null
 
 /**
@@ -458,8 +459,16 @@ export async function initializeLSP(
       console.log('[LSP Client] ✅ DOM event listener registered for Ctrl+Space fallback')
     }
     
-    // Add context menu actions for Generate and Modify (only once)
-    if (!contextMenuActionsRegistered) {
+    // Add context menu actions for Generate and Modify
+    // Re-register if this is a different editor instance (e.g., after switching from diff view)
+    const isNewEditor = registeredEditorInstance !== editor
+    if (!contextMenuActionsRegistered || isNewEditor) {
+      // If switching to a new editor, we need to re-register actions
+      if (isNewEditor && contextMenuActionsRegistered) {
+        console.log('[LSP Client] 🔄 New editor instance detected, re-registering context menu actions')
+        contextMenuActionsRegistered = false // Reset flag to allow re-registration
+      }
+      
       try {
         // Generate Rule action (when outside a rule)
         editor.addAction({
@@ -542,6 +551,7 @@ export async function initializeLSP(
         })
         
         contextMenuActionsRegistered = true
+        registeredEditorInstance = editor // Track which editor has actions registered
         console.log('[LSP Client] ✅ Context menu actions "Generate Rule", "Modify Rule", and "Toggle Auto Completion" registered')
       } catch (error) {
         console.error('[LSP Client] ❌ Failed to register context menu actions:', error)
@@ -1478,5 +1488,6 @@ export function disconnectLSP(): void {
   globalEditorRef = null
   isConnected = false
   contextMenuActionsRegistered = false // Reset flag so actions can be registered again on next init
+  registeredEditorInstance = null // Clear editor instance reference
 }
 

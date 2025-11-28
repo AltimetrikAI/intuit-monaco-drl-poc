@@ -186,7 +186,14 @@ export function EditorWithDiff({
     }
     
     // Skip if already initialized to avoid repeated checks
-    if (lspInitialized.current) {
+    // But allow re-initialization if we're in editor view (not diff view)
+    if (lspInitialized.current && !showDiff) {
+      // Already initialized for this editor instance
+      return
+    }
+    
+    // Don't initialize LSP in diff view
+    if (showDiff) {
       return
     }
     
@@ -234,7 +241,7 @@ export function EditorWithDiff({
     } else {
       console.log('[Editor] ⚠️  Waiting for factObject and bddTests...')
     }
-  }, [enableLSP, language, factObject, bddTests, editorMounted]) // Removed 'value' to prevent re-runs on every keystroke
+  }, [enableLSP, language, factObject, bddTests, editorMounted, showDiff]) // Include showDiff to re-initialize when switching back from diff view
 
   // Send document updates to LSP
   useEffect(() => {
@@ -453,17 +460,31 @@ export function EditorWithDiff({
   // Note: The @monaco-editor/react library handles model disposal automatically
   // This effect just ensures editorRef is cleared when switching
   useEffect(() => {
-    // When showDiff changes, clear the editor ref to prevent stale references
-    // The actual cleanup is handled by @monaco-editor/react
-    if (!showDiff && editorRef.current) {
-      // Editor mode - ensure we have the right reference
+    // When showDiff changes, reset LSP initialization state so it re-initializes with new editor
+    if (!showDiff) {
+      // Switching back to editor view - reset LSP state to allow re-initialization
+      console.log('[Editor] 🔄 Switching back to editor view, resetting LSP state')
+      lspInitialized.current = false
+      setEditorMounted(false) // Reset mounted state, will be set to true when new editor mounts
+    } else {
+      // Switching to diff view - disconnect LSP
+      console.log('[Editor] 🔄 Switching to diff view, disconnecting LSP')
+      if (enableLSP && language === 'java') {
+        disconnectLSP()
+        lspInitialized.current = false
+      }
+      setEditorMounted(false)
+    }
+    
+    // Clear editor ref when switching views
+    if (editorRef.current) {
       const currentEditor = editorRef.current
       if (currentEditor && (currentEditor as any).getModifiedEditor) {
         // This was a diff editor, clear it
         editorRef.current = null
       }
     }
-  }, [showDiff])
+  }, [showDiff, enableLSP, language])
 
   async function handleSaveClick() {
     if (hasChanges) {
